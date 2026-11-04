@@ -1,7 +1,29 @@
+# dependencies
 node_modules/
+
+# secrets and local settings (never commit these)
 .env
 .env.*
 !.env.example
-*.log
+
+# uploaded files and local data
+storage/
 uploads/
-backups/
+
+# logs
+logs/
+*.log
+npm-debug.log*
+
+# tests and tools
+coverage/
+.nyc_output/
+
+# Vercel
+.vercel
+
+# OS and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
