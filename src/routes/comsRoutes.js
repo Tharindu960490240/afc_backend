@@ -1,6 +1,7 @@
 const router = require("express").Router();
 const agents = require("../controllers/comsAgentController");
 const misc = require("../controllers/comsMiscController");
+const exp = require("../controllers/exportController");
 const validate = require("../middlewares/validate");
 const limits = require("../middlewares/rateLimit");
 const { authenticate, requireRole } = require("../middlewares/authenticate");
@@ -26,11 +27,13 @@ router.patch("/agents/:id/persons/:personId", validate(s.personParams, "params")
 router.post("/agents/:id/persons/:personId/delete", validate(s.personParams, "params"), validate(s.agentDelete), agents.removePerson);
 
 // ---- public-holiday calendar ----
+router.get("/holidays/export", limits.sensitive, exp.holidays);
 router.get("/holidays", misc.holidays);
 router.post("/holidays", requireRole("admin"), validate(s.holidayBody), misc.addHoliday);
 router.delete("/holidays/:id", requireRole("admin"), validate(s.idParam, "params"), misc.removeHoliday);
 
 // ---- audit viewer: Compliance, CEO and administrators ----
+router.get("/audit/export", requireRole("admin", "compliance", "ceo"), limits.sensitive, validate(s.auditQuery, "query"), exp.auditLog);
 router.get("/audit", requireRole("admin", "compliance", "ceo"), validate(s.auditQuery, "query"), misc.auditList);
 
 module.exports = router;

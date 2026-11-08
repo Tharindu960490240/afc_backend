@@ -1,6 +1,7 @@
 const asyncHandler = require("../utils/asyncHandler");
 const { clientInfo } = require("../utils/request");
 const svc = require("../services/comsAgentService");
+const { sendCsv } = require("../utils/csv");
 
 const ok = (res, data, extra = {}) => res.json({ success: true, data, ...extra });
 
@@ -44,12 +45,7 @@ const removePerson = asyncHandler(async (req, res) =>
 
 const exportCsv = asyncHandler(async (req, res) => {
   const csv = await svc.exportCsv(req.user, req.query, clientInfo(req));
-  res.set({
-    "Content-Type": "text/csv; charset=utf-8",
-    "Content-Disposition": `attachment; filename="agent-register-${new Date().toISOString().slice(0, 10)}.csv"`,
-    "Cache-Control": "no-store",
-  });
-  res.send(String.fromCharCode(0xfeff) + csv); // byte-order mark so Excel reads UTF-8
+  sendCsv(res, "agent-register", csv);
 });
 
 module.exports = { list, meta, detail, create, sendLink, update, status, remove, restore, milestone, addPerson, updatePerson, removePerson, exportCsv };

@@ -44,13 +44,15 @@ const env = {
     from: process.env.EMAIL_FROM || process.env.SMTP_USER,
     support: process.env.SUPPORT_EMAIL || process.env.EMAIL_FROM || process.env.SMTP_USER,
     logoUrl: process.env.LOGO_URL,
+    brevoKey: process.env.BREVO_API_KEY, // used when EMAIL_MODE=brevo (sends over HTTPS, for hosts that block SMTP)
   },
 };
 
 const problems = [];
 if (!env.db.url) problems.push("DATABASE_URL is required");
 if (!env.jwt.secret || env.jwt.secret.length < 32) problems.push("JWT_SECRET is required and must be at least 32 characters");
-if (env.nodeEnv === "production" && env.email.mode !== "smtp") problems.push("EMAIL_MODE must be 'smtp' in production");
+if (env.nodeEnv === "production" && !["smtp", "brevo"].includes(env.email.mode)) problems.push("EMAIL_MODE must be 'smtp' or 'brevo' in production");
+if (env.email.mode === "brevo" && (!env.email.brevoKey || !env.email.from)) problems.push("BREVO_API_KEY and EMAIL_FROM are required when EMAIL_MODE=brevo");
 if (env.email.mode === "smtp" && (!env.email.host || !env.email.user || !env.email.pass)) problems.push("SMTP_HOST, SMTP_USER and SMTP_PASS are required when EMAIL_MODE=smtp");
 if (problems.length) {
   console.error("Invalid configuration:\n - " + problems.join("\n - "));

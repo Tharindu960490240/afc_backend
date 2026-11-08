@@ -11,7 +11,8 @@ const list = async ({ status, limit, offset }) => {
     await query(
       `SELECT u.id, u.first_name, u.last_name, u.email, u.phone, u.status, u.created_at,
               ap.agency_name, ap.business_number, ap.country, ap.email_verified_at,
-              ap.decided_at, ap.rejection_reason
+              ap.decided_at, ap.rejection_reason,
+              (SELECT p.agent_id FROM agent_persons p WHERE p.portal_user_id = u.id AND p.deleted_at IS NULL LIMIT 1) AS agent_id
        FROM users u JOIN agent_profiles ap ON ap.user_id = u.id
        WHERE u.role='agent' AND ap.registered_via='website' AND u.status = $1
        ORDER BY u.created_at DESC LIMIT $2 OFFSET $3`,

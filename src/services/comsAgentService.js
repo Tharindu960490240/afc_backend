@@ -13,7 +13,8 @@ const repo = require("../repositories/comsAgentRepo");
 const userRepo = require("../repositories/userRepo");
 const audit = require("../repositories/auditRepo");
 const calendar = require("./calendarService");
-const { prismsMissing } = require("./prisms");
+const { prismsMissing, applicationMissing } = require("./prisms");
+const { csvCell } = require("../utils/csv");
 const email = require("./emailService");
 
 const ENTITY = "agent";
@@ -87,8 +88,9 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   need(actor, "read");
   const a = await repo.findById(id);
   if (!a || (a.deleted_at && (!includeDeleted || !allowed(actor, "restore")))) throw new AppError(404, "Agent not found.");
-  const [persons, history, agreements, signed, activity] = await Promise.all([
+  const [persons, referees, history, agreements, signed, activity] = await Promise.all([
     repo.persons(id),
+    repo.referees(id),
     repo.history(id),
     repo.agreements(id),
     repo.hasSignedAgreement(id),
@@ -98,6 +100,8 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   return {
     ...base,
     persons,
+    referees,
+    application_missing: applicationMissing(a, referees.length),
     history,
     agreements,
     has_signed_agreement: signed,
@@ -196,6 +200,18 @@ async function update(actor, id, body, ctx) {
       await repo.update(client, id, body, actor.id);
       const after = await repo.findById(id, client);
       const diff = changes(before, after, keys);
+      if ("account_manager_id" in diff.after) {
+        // the audit viewer shows people by name, not by database number
+        const nameOf = async (uid) => {
+          if (!uid) return null;
+          const u = await userRepo.findById(uid);
+          return u ? `${u.first_name} ${u.last_name}`.trim() : `User ${uid}`;
+        };
+        diff.before.account_manager = await nameOf(diff.before.account_manager_id);
+        diff.after.account_manager = await nameOf(diff.after.account_manager_id);
+        delete diff.before.account_manager_id;
+        delete diff.after.account_manager_id;
+      }
       if (diff.changed) {
         await audit.log({ actorId: actor.id, action: "agent.updated", entityType: ENTITY, entityId: id, before: diff.before, after: diff.after, ...ctx }, client);
       }
@@ -406,9 +422,114 @@ async function acknowledge(agentId) {
   const people = await repo.persons(agentId);
   const to = people.find((p) => p.portal_user_id) || people[0];
   if (!to) return;
-  const missing = prismsMissing(a, a.director_count).map((m) => m.label);
+  const referees = await repo.referees(agentId);
+  const missing = [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)].map((m) => m.label);
   await email.sendApplicationReceived({ to: to.email, firstName: to.name.split(" ")[0], legalName: a.legal_name, missing });
   await repo.markAcknowledged(agentId);
+}
+
+// ---------- the application form ----------
+// Saves everything the applicant entered. Runs inside the transaction of the caller.
+// website registration: called right after the login is created; portal: called by the signed-in agent.
+async function saveApplication(client, agentId, user, app) {
+  const current = await repo.findById(agentId, client, { lock: true });
+  await repo.update(client, agentId, {
+    legal_name: app.legal_name,
+    trading_names: app.trading_names,
+    abn_acn: app.abn_acn,
+    country: app.country,
+    is_body_corporate: app.is_body_corporate,
+    principal_address: app.principal_address,
+    registered_office_address: app.registered_office_address || null,
+    postal_address: app.postal_address || null,
+    website: app.website || null,
+    marn: app.marn || null,
+    phone: app.business_phone || current.phone || user.phone || null,
+  }, user.id);
+
+  // keep the older agent profile (used by the agreements screens) in step
+  await client.query(
+    `UPDATE agent_profiles SET agency_name = $2, business_number = $3, country = $4 WHERE user_id = $1`,
+    [user.id, app.legal_name, app.abn_acn, app.country],
+  );
+
+  const people = await repo.persons(agentId, client);
+  const me = people.find((p) => p.portal_user_id === user.id);
+  const mine = { role: app.applicant_role, marn: app.applicant_marn || null, involved_in_enrolments: app.applicant_in_enrolments };
+  if (me) await repo.updatePerson(client, me.id, mine, user.id);
+  else {
+    await repo.insertPerson(client, agentId, {
+      name: `${user.first_name} ${user.last_name}`.trim(), email: user.email, ...mine,
+      is_primary_contact: !people.some((p) => p.is_primary_contact), portal_user_id: user.id,
+    }, user.id);
+  }
+  const known = new Set(people.map((p) => p.email.toLowerCase()).concat(user.email.toLowerCase()));
+  for (const p of app.people) {
+    if (known.has(p.email)) continue; // already on the record (for example from the expression of interest)
+    known.add(p.email);
+    await repo.insertPerson(client, agentId, { ...p, marn: p.marn || null, location: p.location || null }, user.id);
+  }
+
+  await repo.replaceReferees(client, agentId, app.referees, user.id);
+  await repo.setApplication(client, agentId, { coi_declared: app.coi_declared, coi_details: app.coi_details }, user.id);
+  await audit.log({
+    actorId: user.id, action: "agent.application_submitted", entityType: ENTITY, entityId: agentId,
+    after: {
+      legal_name: app.legal_name, country: app.country, is_body_corporate: app.is_body_corporate,
+      people: app.people.length + 1, referees: app.referees.length, conflict_of_interest: app.coi_declared,
+    },
+  }, client);
+}
+
+const OPEN_FOR_APPLICATION = ["prospect", "applied"];
+
+// What the signed-in agent sees when they open "My application".
+async function myApplication(user) {
+  const found = await repo.findByPortalUser(user.id);
+  if (!found) throw new AppError(404, "We could not find your application.");
+  const a = await repo.findById(found.id);
+  const [people, referees] = await Promise.all([repo.persons(a.id), repo.referees(a.id)]);
+  const me = people.find((p) => p.portal_user_id === user.id);
+  return {
+    status: a.status,
+    submitted: !!a.application_submitted_at,
+    submitted_at: a.application_submitted_at,
+    editable: OPEN_FOR_APPLICATION.includes(a.status) && !a.application_submitted_at,
+    agent: {
+      legal_name: a.legal_name, trading_names: a.trading_names, country: a.country, abn_acn: a.abn_acn || "",
+      is_body_corporate: a.is_body_corporate, principal_address: a.principal_address || "",
+      registered_office_address: a.registered_office_address || "", postal_address: a.postal_address || "",
+      business_phone: a.phone || "", website: a.website || "", marn: a.marn || "",
+    },
+    applicant: me ? { role: me.role === "director" ? "director" : "staff", marn: me.marn || "", involved_in_enrolments: me.involved_in_enrolments } : null,
+    people: people.filter((p) => p.portal_user_id !== user.id).map((p) => ({
+      name: p.name, email: p.email, role: p.role, marn: p.marn || "", involved_in_enrolments: p.involved_in_enrolments, location: p.location || "",
+    })),
+    referees: referees.map((r) => ({ name: r.name, organisation: r.organisation, email: r.email, phone: r.phone || "" })),
+    missing: [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)],
+  };
+}
+
+// An agent invited by the college completes the application after signing in.
+async function submitApplication(user, body, ctx) {
+  const found = await repo.findByPortalUser(user.id);
+  if (!found) throw new AppError(404, "We could not find your application.");
+  await withTransaction(async (client) => {
+    const a = await repo.findById(found.id, client, { lock: true });
+    if (a.application_submitted_at) throw new AppError(409, "Your application has already been submitted. Please contact the college to change it.");
+    if (!OPEN_FOR_APPLICATION.includes(a.status)) throw new AppError(409, "Your application is no longer open for changes.");
+    await saveApplication(client, a.id, user, body);
+  });
+  return myApplication(user);
+}
+
+// BR-02 / E1-2: an agent cannot be approved while a required PRISMS field, a declaration or a referee is missing.
+async function approvalMissing(client, userId) {
+  const found = await repo.findByPortalUser(userId, client);
+  if (!found) return [];
+  const a = await repo.findById(found.id, client);
+  const referees = await repo.referees(a.id, client);
+  return [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)].map((m) => m.label);
 }
 
 // The college decided on a website registration (existing Registrations screen).
@@ -441,12 +562,6 @@ async function syncUserStatus(userId, userStatus, actorId) {
 }
 
 // ---------- export (NF-13) ----------
-const csvCell = (v) => {
-  let s = v == null ? "" : Array.isArray(v) ? v.join("; ") : String(v);
-  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; // stops spreadsheet formulas from running
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-};
-
 async function exportCsv(actor, q, ctx) {
   need(actor, "read");
   const rows = await repo.listAll({ status: q.status, tier: q.tier, risk: q.risk, country: q.country, manager: q.manager, search: q.search, deleted: false }, 5000);
@@ -471,5 +586,5 @@ async function exportCsv(actor, q, ctx) {
 module.exports = {
   list, getDetail, meta, createFromEoi, sendApplicationLink, update, changeStatus, remove, restore,
   addPerson, updatePerson, removePerson, recordMilestone,
-  linkNewPortalUser, markApplicationReceived, acknowledge, syncDecision, syncUserStatus, exportCsv, slaFor,
+  linkNewPortalUser, saveApplication, myApplication, submitApplication, markApplicationReceived, acknowledge, syncDecision, approvalMissing, syncUserStatus, exportCsv, slaFor,
 };

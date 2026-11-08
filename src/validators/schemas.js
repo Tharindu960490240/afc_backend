@@ -1,4 +1,5 @@
 const { z } = require("zod");
+const { validAbnOrAcn } = require("../utils/abn");
 const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES } = require("../const");
 
 const email = z.string().trim().toLowerCase().email().max(254);
@@ -55,16 +56,76 @@ const acceptSchemas = {
   student: z.object({ ...acceptBase, date_of_birth: isoDate, country }).strict(),
 };
 
-// Agent registration from the website. Same fields as an invited agent, plus the email.
+// ---------- agent application form (website registration and the portal) ----------
+const longText = (min, max, label) => z.string().trim().min(min, `${label} is required`).max(max);
+const marn = z.string().trim().regex(/^(\d{7})?$/, "A MARN has 7 digits").default("");
+const applicationPerson = z.object({
+  name: z.string().trim().min(2, "Enter the full name").max(120),
+  email,
+  role: z.enum(PERSON_ROLES),
+  marn,
+  involved_in_enrolments: z.boolean(),
+  location: z.string().trim().max(160).default(""),
+}).strict();
+const applicationReferee = z.object({
+  name: z.string().trim().min(2, "Enter the referee's name").max(120),
+  organisation: z.string().trim().min(2, "Enter the referee's organisation").max(160),
+  email,
+  phone,
+}).strict();
+const applicationShape = {
+  legal_name: z.string().trim().min(2, "Enter the legal name").max(200),
+  trading_names: z.array(z.string().trim().min(1).max(120)).max(10).default([]),
+  country,
+  abn_acn: z.string().trim().min(4, "Enter your ABN, ACN or business registration number").max(40),
+  is_body_corporate: z.boolean(),
+  principal_address: longText(5, 500, "The principal place of business"),
+  registered_office_address: z.string().trim().max(500).default(""),
+  postal_address: z.string().trim().max(500).default(""),
+  business_phone: z.union([phone, z.literal("")]).default(""),
+  website: z.union([z.string().trim().max(300).url("Enter a full web address, for example https://example.com"), z.literal("")]).default(""),
+  marn,
+  // the person filling in the form
+  applicant_role: z.enum(["director", "staff"]),
+  applicant_marn: marn,
+  applicant_in_enrolments: z.boolean(),
+  // everyone else: directors, staff, sub-agents
+  people: z.array(applicationPerson).max(30).default([]),
+  referees: z.array(applicationReferee).min(2, "Give two referees").max(3),
+  coi_declared: z.boolean({ error: "Please answer this question" }),
+  coi_details: z.string().trim().max(2000).default(""),
+  code_of_ethics: z.literal(true, { error: "You must accept the code of ethics" }),
+  information_true: z.literal(true, { error: "Please confirm the information is correct" }),
+};
+// rules that look at several fields at once
+function checkApplication(v, ctx, applicantEmail) {
+  const fail = (path, message) => ctx.addIssue({ code: "custom", path: [].concat(path), message });
+  if (/^australia$/i.test(v.country) && !validAbnOrAcn(v.abn_acn)) fail("abn_acn", "This is not a valid ABN or ACN");
+  if (v.is_body_corporate) {
+    if (!v.registered_office_address) fail("registered_office_address", "A body corporate needs a registered office address");
+    if (v.applicant_role !== "director" && !v.people.some((p) => p.role === "director")) fail("people", "Add at least one director");
+  }
+  if (v.coi_declared && v.coi_details.length < 10) fail("coi_details", "Please describe the conflict of interest");
+  const seen = new Set(applicantEmail ? [applicantEmail] : []);
+  v.people.forEach((p, i) => {
+    if (seen.has(p.email)) fail(["people", i, "email"], "This email is already on the list");
+    seen.add(p.email);
+  });
+  const refs = new Set();
+  v.referees.forEach((r, i) => {
+    if (refs.has(r.email) || (applicantEmail && r.email === applicantEmail)) fail(["referees", i, "email"], "Use a different email for each referee");
+    refs.add(r.email);
+  });
+}
 const registerAgent = z
-  .object({
-    ...acceptBase,
-    email,
-    agency_name: z.string().trim().min(2).max(160),
-    business_number: z.string().trim().max(25).regex(/^([A-Za-z0-9][A-Za-z0-9 -]{3,24})?$/, "Invalid business number").default(""),
-    country,
-  })
-  .strict();
+  .object({ ...acceptBase, email, ...applicationShape })
+  .strict()
+  .superRefine((v, ctx) => checkApplication(v, ctx, v.email));
+// A signed-in agent (invited by the college) completes the same application.
+const submitApplication = z
+  .object(applicationShape)
+  .strict()
+  .superRefine((v, ctx) => checkApplication(v, ctx, null));
 const verifyAgent = z.object({ token });
 const registrationListQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -223,7 +284,7 @@ module.exports = {
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
   comsAgentsQuery, uuidParam, personParams, holidayBody, auditQuery,
   login, forgotPassword, resetPassword, changePassword, updateProfile,
-  registerAgent, verifyAgent, registrationListQuery, rejectRegistration,
+  registerAgent, submitApplication, verifyAgent, registrationListQuery, rejectRegistration,
   createInvitation, acceptSchemas, listQuery, userStatus, idParam, token,
   sendAgreement, signAgreement, approveAgreement, saveTemplate, previewTemplate, rejectAgreement, cancelAgreement, agreementFileParams, agreementListQuery, agentsQuery,
 };

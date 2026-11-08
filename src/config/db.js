@@ -9,7 +9,7 @@ const pool = new Pool({
   ssl: env.db.ssl ? { rejectUnauthorized: env.db.rejectUnauthorized } : false,
   // dates such as agreement expiry follow the college's local day
   options: `-c timezone=${env.timezone}`,
-  max: 10,
+  max: Number(process.env.DB_POOL_MAX) || 10,
   idleTimeoutMillis: 30000,
 });
 

@@ -15,6 +15,7 @@ const LIST_SELECT = `
   a.status, a.status_changed_at, a.source, a.tier, a.risk_rating, a.risk_override_reason, a.contact_cadence_days,
   a.account_manager_id, a.last_contact_at, a.application_received_at, a.ack_sent_at, a.ack_due_date, a.decision_due_date,
   a.prisms_recorded_at, a.induction_recorded_at, a.rejection_reason, a.xero_contact_id, a.axcelerate_agent_id,
+  a.coi_declared, a.coi_details, a.code_of_ethics_ack_at, a.information_confirmed_at, a.application_submitted_at,
   a.created_at, a.updated_at, a.deleted_at, a.delete_reason,
   m.first_name AS manager_first_name, m.last_name AS manager_last_name,
   (SELECT COUNT(*)::int FROM agent_persons p
@@ -156,8 +157,8 @@ const insertPerson = async (client, agentId, p, actorId) =>
   (
     await client.query(
       `INSERT INTO agent_persons (agent_id, name, email, role, marn, is_director, involved_in_enrolments,
-                                  is_primary_contact, location, portal_user_id, active, created_by, updated_by)
-       VALUES ($1,$2,lower($3),$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) RETURNING id`,
+                                  is_primary_contact, location, portal_user_id, active, created_by, updated_by, created_at)
+       VALUES ($1,$2,lower($3),$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,clock_timestamp()) RETURNING id`,
       [
         agentId, p.name, p.email, p.role || "staff", p.marn || null, (p.role || "staff") === "director",
         !!p.involved_in_enrolments, !!p.is_primary_contact, p.location || null, p.portal_user_id || null,
@@ -181,6 +182,36 @@ const clearPrimary = (client, agentId) =>
   client.query(`UPDATE agent_persons SET is_primary_contact = false WHERE agent_id = $1 AND is_primary_contact`, [agentId]);
 const softDeletePerson = (client, id, reason, actorId) =>
   client.query(`UPDATE agent_persons SET deleted_at = now(), deleted_by = $3, delete_reason = $2, active = false WHERE id = $1`, [id, reason, actorId]);
+
+// ---------- application form: declarations and referees ----------
+const setApplication = (client, id, d, actorId) =>
+  client.query(
+    `UPDATE agents SET coi_declared = $2, coi_details = $3, code_of_ethics_ack_at = now(),
+       information_confirmed_at = now(), application_submitted_at = now(), updated_at = now(), updated_by = $4
+     WHERE id = $1`,
+    [id, d.coi_declared, d.coi_declared ? d.coi_details : null, actorId || null],
+  );
+
+const referees = async (agentId, client) =>
+  (await q(client).query(
+    `SELECT id, name, organisation, email, phone, created_at FROM agent_referees
+     WHERE agent_id = $1 AND deleted_at IS NULL ORDER BY created_at, id`, [agentId],
+  )).rows;
+
+async function replaceReferees(client, agentId, list, actorId) {
+  await client.query(
+    `UPDATE agent_referees SET deleted_at = now(), deleted_by = $2, delete_reason = 'Replaced by the application form'
+     WHERE agent_id = $1 AND deleted_at IS NULL`, [agentId, actorId || null],
+  );
+  for (const r of list) {
+    await client.query(
+      // clock_timestamp(): rows added in one transaction keep the order the applicant typed them in
+      `INSERT INTO agent_referees (agent_id, name, organisation, email, phone, created_by, updated_by, created_at)
+       VALUES ($1,$2,$3,lower($4),$5,$6,$6,clock_timestamp())`,
+      [agentId, r.name, r.organisation, r.email, r.phone || null, actorId || null],
+    );
+  }
+}
 
 // ---------- links to the existing portal ----------
 const findByPortalUser = async (userId, client, { lock = false } = {}) =>
@@ -232,4 +263,5 @@ module.exports = {
   softDelete, restore, setSla, markAcknowledged, setMilestone,
   persons, findPerson, insertPerson, updatePerson, linkPortalUser, clearPrimary, softDeletePerson,
   findByPortalUser, portalUserIds, agreements, hasSignedAgreement, staffUsers,
+  setApplication, referees, replaceReferees,
 };

@@ -59,13 +59,14 @@ async function registerAgent(body, ctx) {
       await client.query(
         `INSERT INTO agent_profiles (user_id, agency_name, business_number, country, registered_via)
          VALUES ($1,$2,$3,$4,'website')`,
-        [user.id, body.agency_name, body.business_number, body.country],
+        [user.id, body.legal_name, body.abn_acn, body.country],
       );
-      await comsAgents.linkNewPortalUser(
+      const { agentId } = await comsAgents.linkNewPortalUser(
         client,
-        { user, agencyName: body.agency_name, businessNumber: body.business_number, country: body.country, via: "website" },
+        { user, agencyName: body.legal_name, businessNumber: body.abn_acn, country: body.country, via: "website" },
         null,
       );
+      await comsAgents.saveApplication(client, agentId, user, body); // PRISMS fields, people, referees, declarations
       await audit.log({ actorId: user.id, action: "agent.registered", metadata: { via: "website" }, ...ctx }, client);
       return sendVerification(client, user);
     });
@@ -114,6 +115,12 @@ async function decide(actor, id, approve, reason, ctx) {
     const row = (await client.query(`SELECT status FROM users WHERE id=$1 FOR UPDATE`, [id])).rows[0];
     if (!row || row.status !== "pending_approval") {
       throw new AppError(409, "This registration is not waiting for a decision.");
+    }
+    if (approve) {
+      const missing = await comsAgents.approvalMissing(client, id);
+      if (missing.length) {
+        throw new AppError(409, `This application cannot be approved yet. Still missing: ${missing.join("; ")}. Open the agent record to complete it.`);
+      }
     }
     await client.query(`UPDATE users SET status=$2, updated_at=now() WHERE id=$1`, [id, approve ? "active" : "rejected"]);
     await client.query(

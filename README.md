@@ -108,9 +108,17 @@ Finished PDFs are stored under `UPLOAD_DIR` (default `storage/`) with random nam
 ## COMS Block 1, Part 1: staff roles, agent register, calendar, audit
 
 - New staff roles: `ceo`, `director`, `marketing_officer`, `admissions`, `coe_admin`, `accounts`, `compliance` (admin invites them from Invitations). `admin` can do everything.
+- CSV exports (NF-13, each one is written to the audit log): `/api/coms/agents/export`, `/api/users/export` (admin), `/api/agreements/export` (admin), `/api/coms/holidays/export`, `/api/coms/audit/export` (admin, compliance, CEO). They apply the same filters as the on-screen list.
+- Approving a website registration (`POST /api/registrations/:id/approve`) is refused with 409 while a PRISMS field, a declaration or a referee is still missing; the message lists what is missing.
 - Agent register: `/api/coms/agents` (list, create from expression of interest, edit, status, people, milestones, soft delete/restore, CSV export). Existing agent accounts are back-filled by migration `005`.
 - Working-day calendar: `public_holidays` table (Tasmania and Victoria, seeded for 2026-2027), editable by admin at `/api/coms/holidays`. Add Launceston local days and the 2027 AFL Grand Final Friday when announced.
 - Audit log now keeps before/after values; rows cannot be edited, and cannot be deleted for 7 years. For a developer database only: `SET afc.allow_audit_purge = on;` allows deletes.
 - Run `npm run migrate` after updating.
-#   a f c _ b a c k e n d  
- 
+
+### Agent application form (completes COMS Part 1)
+
+- Public page `/register/agent` is now a six-step application: account, business (PRISMS fields), people, two referees, declarations, review. `POST /api/auth/register-agent` takes the whole application; nothing is saved if any part is invalid.
+- Agents invited by the college complete the same form after sign-in at `/agent/application` (`GET` and `POST /api/agent-application`, once only).
+- Migration `006` adds the declarations to `agents` and the `agent_referees` table. Referee checks are built in Part 2.
+- Email can also be sent over HTTPS for hosts that block SMTP (for example Vercel): set `EMAIL_MODE=brevo`, `BREVO_API_KEY` and `EMAIL_FROM`.
+- `api/index.js` and `vercel.json` let the same code run on Vercel (see `.env.example`).

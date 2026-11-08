@@ -7,5 +7,6 @@ router.use("/agents", require("./agentRoutes"));
 router.use("/registrations", require("./registrationRoutes"));
 router.use("/agreement-template", require("./templateRoutes"));
 router.use("/agreements", require("./agreementRoutes"));
+router.use("/agent-application", require("./agentApplicationRoutes"));
 router.use("/coms", require("./comsRoutes"));
 module.exports = router;

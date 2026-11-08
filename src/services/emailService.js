@@ -27,6 +27,23 @@ const logoAttachments = () =>
     : [{ filename: "afc-logo.png", path: path.join(__dirname, "..", "emails", "assets", "afc-logo.png"), cid: LOGO_CID }];
 
 async function send({ to, subject, html, text }) {
+  if (env.email.mode === "brevo") {
+    // HTTPS API: works on hosts such as Vercel where outgoing SMTP is blocked. The logo must come from LOGO_URL.
+    const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": env.email.brevoKey, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        sender: { name: env.email.fromName, email: env.email.from },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html,
+        textContent: text,
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`Brevo ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    return;
+  }
   if (env.email.mode !== "smtp") {
     // Local development: show the message instead of sending it.
     outbox.push({ to, subject, text, html });
@@ -45,8 +62,15 @@ async function send({ to, subject, html, text }) {
 }
 
 // Fire-and-forget wrapper: email problems are logged, never shown to the caller.
-const sendSafely = (message) =>
-  send(message).catch((err) => console.error(`Email to ${message.to} failed:`, err.message));
+// Pending sends are tracked so a serverless host (Vercel) can wait for them before it freezes the function.
+const pending = new Set();
+const sendSafely = (message) => {
+  const p = send(message).catch((err) => console.error(`Email to ${message.to} failed:`, err.message));
+  pending.add(p);
+  p.finally(() => pending.delete(p));
+  return p;
+};
+const flushEmails = () => Promise.allSettled([...pending]);
 
 // Every email is: subject + compose({...}) from the shared layout.
 const deliver = (to, subject, content) => sendSafely({ to, subject, ...compose(content) });
@@ -334,7 +358,7 @@ function sendAgentRejected({ to, firstName, reason }) {
 module.exports = {
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin,
   sendAgentApproved, sendAgentRejected,
-  outbox, sendInvitation, sendPasswordReset, sendPasswordChanged,
+  outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,
   sendAgreementSent, sendAgreementSubmitted, sendAgreementRejected, sendAgreementApproved,
   sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,
   sendAgreementExpiryToAdmin,

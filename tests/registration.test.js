@@ -21,7 +21,14 @@ const json = async (method, p, { token, body } = {}) => {
 };
 const form = (over = {}) => ({
   first_name: "Priya", last_name: "Nair", email: "priya@agency.in", phone: "+91 98765 43210",
-  password: PW, agency_name: "Nair Education", business_number: "GST 12345", country: "India", consent: true, ...over,
+  password: PW, consent: true,
+  legal_name: "Nair Education", abn_acn: "GST 12345", country: "India", is_body_corporate: false,
+  principal_address: "12 MG Road, Bengaluru, India", applicant_role: "director", applicant_in_enrolments: true,
+  referees: [
+    { name: "Anil Rao", organisation: "Rao Colleges", email: "anil@rao.edu.in", phone: "+91 98111 22222" },
+    { name: "Mei Tan", organisation: "Tan Institute", email: "mei@tan.edu.sg", phone: "+65 9123 0000" },
+  ],
+  coi_declared: false, code_of_ethics: true, information_true: true, ...over,
 });
 const register = (over) => json("POST", "/api/auth/register-agent", { body: form(over) });
 const mails = (to, re) => outbox.filter((m) => m.to === to && re.test(m.subject));
@@ -45,7 +52,7 @@ test("the form checks its input and ignores nothing it should not accept", async
   assert.equal((await register({ password: "weak" })).status, 400);
   assert.equal((await register({ consent: false })).status, 400);
   assert.equal((await register({ email: "not-an-email" })).status, 400);
-  assert.equal((await register({ agency_name: "" })).status, 400);
+  assert.equal((await register({ legal_name: "" })).status, 400);
   assert.equal((await register({ role: "admin" })).status, 400); // strict: no role from the browser
   assert.equal((await register({ status: "active" })).status, 400);
   assert.equal(await status("priya@agency.in"), undefined);
@@ -85,7 +92,7 @@ test("answers do not reveal whether an email is already registered", async () =>
 test("registering again with a pending email sends a new link and never replaces the password", async () => {
   const first = firstToken;
   outbox.length = 0;
-  assert.equal((await register({ password: NEW_PW, agency_name: "Takeover Ltd" })).status, 202);
+  assert.equal((await register({ password: NEW_PW, legal_name: "Takeover Ltd" })).status, 202);
   const second = tokenFrom(mails("priya@agency.in", /confirm your email/i)[0]);
   assert.notEqual(first, second);
   // the first link no longer works; the stored details are the original ones
