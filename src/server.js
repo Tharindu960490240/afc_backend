@@ -3,6 +3,7 @@ const app = require("./app");
 const { pool } = require("./config/db");
 const cleanup = require("./jobs/cleanup");
 const agreementReminders = require("./jobs/agreementReminders");
+const comsDaily = require("./jobs/comsDaily");
 
 async function main() {
   await pool.query("SELECT 1"); // fail fast if the database is unreachable
@@ -11,6 +12,7 @@ async function main() {
 
   cleanup.start();
   agreementReminders.start();
+  comsDaily.start();
   const server = app.listen(env.port, () => console.log(`AFC API listening on http://localhost:${env.port} (${env.nodeEnv})`));
 
   const shutdown = (signal) => {

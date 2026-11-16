@@ -122,3 +122,25 @@ Finished PDFs are stored under `UPLOAD_DIR` (default `storage/`) with random nam
 - Migration `006` adds the declarations to `agents` and the `agent_referees` table. Referee checks are built in Part 2.
 - Email can also be sent over HTTPS for hosts that block SMTP (for example Vercel): set `EMAIL_MODE=brevo`, `BREVO_API_KEY` and `EMAIL_FROM`.
 - `api/index.js` and `vercel.json` let the same code run on Vercel (see `.env.example`).
+
+## COMS Block 1, Part 2: due diligence, approval, agreement, onboarding tasks
+
+**Run `npm run migrate`** (adds migration 007).
+
+New environment variables
+- `EVIDENCE_MAX_MB` – largest evidence upload in MB (default 3). Allowed: PDF, JPG, PNG, DOCX, XLSX, EML, MSG (type checked by content, not just name).
+- `CRON_SECRET` – secret for the daily job. Vercel sends it as `Authorization: Bearer <secret>` to `GET /api/jobs/daily`. `vercel.json` schedules it at 21:10 UTC (about 08:10 Tasmania). On a normal server the same job runs through node-cron.
+
+What it does
+- **Referee checks (E1-4/E1-5):** staff add referees on the agent record, then either email the online form (single-use link, 21 days) or record a phone check using the same 7 questions. Reminders issue a fresh link. A negative or unanswered reference is flagged; staff confirm the outcome.
+- **Due-diligence checklist (E1-6):** referees, ABN, MARN, PRISMS data, conflict-of-interest and code-of-ethics declaration (with file).
+- **Decision (E1-7, BR-06/BR-08/BR-09):** Director, CEO or admin approve or reject with a reason (rejection email can be edited first). Whoever prepared the checks cannot decide the same file. A 10-working-day timer shows amber from day 7 and red from day 10, with one email at each point.
+- **Agreement:** an approved agent gets the agreement from the agent record. When the agent signs and the CEO countersigns, the agent moves to **Onboarding**, a certificate PDF is stored with the agreement and four tasks are created.
+- **Task engine (E5):** regulatory tasks (PRISMS add, ASQAnet notice, website listing) need a note or evidence file to close; general tasks can be added by managers. Tasks can be assigned, cancelled, filtered, exported to CSV (logged in the audit trail), and are reminded and escalated by the daily job.
+- **Active:** the agent becomes Active once the agreement, PRISMS entry and induction are all recorded.
+- Approving through the old Registrations screen now delegates to the same due-diligence decision.
+
+Assumptions to confirm with the client
+- PRISMS and website listing tasks are due in 5 working days; induction in 30 calendar days; the ASQAnet notice 30 calendar days from the agreement start (shown as the legal deadline; alert at day 20, escalation at day 25).
+- Reference emails are sent from the system address and name the college officer.
+- Virus scanning and Microsoft 365 storage for evidence are a later step; files are stored privately on the server.

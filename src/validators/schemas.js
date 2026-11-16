@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const { validAbnOrAcn } = require("../utils/abn");
-const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES } = require("../const");
+const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, TASK_TYPE_LIST } = require("../const");
 
 const email = z.string().trim().toLowerCase().email().max(254);
 const name = z.string().trim().min(1).max(50).regex(/^[\p{L}][\p{L}\s'’.-]*$/u, "Invalid characters");
@@ -151,6 +151,7 @@ const idParam = z.object({ id: z.coerce.number().int().positive() });
 const blankToUndefined = (v) => (typeof v === "string" && v.trim() === "" ? undefined : v);
 const optional = (schema) => z.preprocess(blankToUndefined, schema.optional());
 const months = z.coerce.number().int().min(1).max(60);
+const dateOnlyAny = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => !Number.isNaN(new Date(`${v}T00:00:00Z`).getTime()) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v, "Invalid date");
 const dateOnly = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((v) => {
   const d = new Date(`${v}T00:00:00Z`);
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
@@ -269,6 +270,83 @@ const holidayBody = z.object({
   name: z.string().trim().min(2).max(120),
   jurisdiction: z.enum(["TAS", "VIC"]),
 }).strict();
+
+// ---------- COMS Part 2: due diligence, decision, tasks ----------
+const upload = z.object({ name: z.string().trim().min(1).max(200), data: z.string().min(4) }).strict();
+const refereeBody = {
+  name: z.string().trim().min(2).max(120),
+  organisation: z.string().trim().min(2).max(160),
+  email,
+  phone: nullable(phone).optional(),
+};
+const createReferee = z.object(refereeBody).strict();
+const updateReferee = z.object(refereeBody).partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to update");
+const refereeParams = z.object({ id: z.string().uuid(), refereeId: z.string().uuid() });
+const checkParams = z.object({ id: z.string().uuid(), checkId: z.string().uuid() });
+const answers = z.record(z.string().max(40), z.union([z.string().trim().max(2000), z.boolean()]));
+const phoneCheck = z.object({
+  call_date: dateOnly,
+  spoke_to: z.string().trim().min(2).max(160),
+  answers,
+  outcome: z.enum(["positive", "negative"]).optional(),
+  summary: z.string().trim().min(3).max(3000),
+  file: upload.optional(),
+}).strict();
+const referenceOutcome = z.object({
+  outcome: z.enum(["positive", "negative", "no_response"]),
+  summary: z.string().trim().min(3, "Please add a short summary").max(3000),
+}).strict();
+const referenceAnswers = z.object({ answers }).strict();
+const dueDiligenceCheck = z.object({
+  key: z.enum(["abn", "marn", "prisms"]),
+  status: z.enum(["verified", "failed", "not_applicable"]),
+  note: z.string().trim().max(1000).optional(),
+}).strict();
+const declarations = z.object({
+  coi_declared: z.boolean(),
+  coi_details: optText(2000),
+  code_of_ethics_ack: z.boolean().optional(),
+  coi_review_note: optText(2000),
+  file: upload.optional(),
+}).strict();
+const decision = z.object({
+  decision: z.enum(["approve", "reject"]),
+  reason: z.string().trim().min(3, "Please give a reason").max(2000),
+  send_email: z.boolean().default(true),
+  email_subject: z.string().trim().max(200).optional(),
+  email_body: z.string().trim().max(5000).optional(),
+}).strict();
+const sendAgentAgreement = z.object({
+  title: z.string().trim().min(3).max(160).optional(),
+  note: z.string().trim().max(1000).optional(),
+  validity_months: z.coerce.number().int().min(1).max(60).optional(),
+}).strict();
+const taskCreate = z.object({
+  type: z.enum(TASK_TYPE_LIST).default("GENERAL"),
+  title: z.string().trim().min(3).max(200),
+  description: optText(2000),
+  agent_id: z.string().uuid().optional(),
+  due_date: dateOnlyAny,
+  due_basis: z.enum(["business", "calendar"]).default("calendar"),
+  owner_id: z.coerce.number().int().positive().optional(),
+}).strict();
+const taskComplete = z.object({ note: z.string().trim().max(2000).optional(), file: upload.optional() }).strict();
+const taskAssign = z.object({ owner_id: z.coerce.number().int().positive() }).strict();
+const tasksQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(25),
+  type: z.string().max(200).optional()
+    .transform((v) => (v ? v.split(",").map((x) => x.trim()).filter((x) => TASK_TYPE_LIST.includes(x)) : undefined)),
+  status: z.enum(["open", "done", "cancelled", "all"]).default("open"),
+  overdue: csvBool.optional(),
+  agent_id: z.string().uuid().optional(),
+  owner: z.union([z.literal("me"), z.literal("unassigned"), z.coerce.number().int().positive()]).optional(),
+  category: z.enum(["regulatory", "general"]).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+const publicToken = z.object({ token });
+const fileParams = z.object({ fileId: z.string().uuid() });
+const cancelTask = z.object({ reason: z.string().trim().min(3, "Please give a reason").max(1000) }).strict();
 const auditQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(30),
@@ -283,6 +361,8 @@ const auditQuery = z.object({
 module.exports = {
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
   comsAgentsQuery, uuidParam, personParams, holidayBody, auditQuery,
+  upload, createReferee, updateReferee, refereeParams, checkParams, phoneCheck, referenceOutcome, referenceAnswers,
+  dueDiligenceCheck, declarations, decision, sendAgentAgreement, taskCreate, taskComplete, taskAssign, tasksQuery, publicToken, fileParams, cancelTask,
   login, forgotPassword, resetPassword, changePassword, updateProfile,
   registerAgent, submitApplication, verifyAgent, registrationListQuery, rejectRegistration,
   createInvitation, acceptSchemas, listQuery, userStatus, idParam, token,

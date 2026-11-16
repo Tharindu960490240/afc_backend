@@ -18,10 +18,10 @@ router.get("/:id/files/:fileId/download", limits.sensitive, validate(s.agreement
 // agent signs in the portal
 router.post("/:id/sign", requireRole("agent"), limits.sensitive, validate(s.idParam, "params"), validate(s.signAgreement), ctrl.sign);
 
-// admin only
+// admin only to send from this list (staff send from the agent record); the CEO countersigns
 router.post("/", requireRole("admin"), limits.sensitive, validate(s.sendAgreement), ctrl.send);
-router.post("/:id/approve", requireRole("admin"), limits.sensitive, validate(s.idParam, "params"), validate(s.approveAgreement), ctrl.approve);
-router.post("/:id/reject", requireRole("admin"), validate(s.idParam, "params"), validate(s.rejectAgreement), ctrl.reject);
-router.post("/:id/cancel", requireRole("admin"), validate(s.idParam, "params"), validate(s.cancelAgreement), ctrl.cancel);
+router.post("/:id/approve", requireRole("admin", "ceo"), limits.sensitive, validate(s.idParam, "params"), validate(s.approveAgreement), ctrl.approve);
+router.post("/:id/reject", requireRole("admin", "ceo"), validate(s.idParam, "params"), validate(s.rejectAgreement), ctrl.reject);
+router.post("/:id/cancel", requireRole("admin", "ceo", "director"), validate(s.idParam, "params"), validate(s.cancelAgreement), ctrl.cancel);
 
 module.exports = router;

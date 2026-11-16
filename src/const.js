@@ -46,9 +46,43 @@ const AGENT_PERMS = Object.freeze({
   restore: [ROLES.ADMIN],
   recordPrisms: [ROLES.ADMIN, ROLES.COE_ADMIN],
   recordInduction: [ROLES.ADMIN, ROLES.MARKETING, ROLES.DIRECTOR],
+  // Part 2
+  dueDiligence: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING, ROLES.COMPLIANCE], // referee checks, ABN/MARN/PRISMS checks, declarations
+  decide: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO],                                // approve or reject (BR-06: never the preparer)
+  sendAgreement: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING, ROLES.CEO],
 });
 
-// Manual status moves. Approve/reject (needs due diligence) arrives in Part 2, Expired is automatic (Part 5).
+// The reference verification form. The same questions are used for the emailed form and for phone checks.
+// `favourable` is the answer that counts as a good reference; a question without it is for information only.
+const REFERENCE_QUESTIONS = Object.freeze([
+  { key: "known_for", type: "text", required: true, label: "How long, and in what capacity, have you known this agent?" },
+  { key: "worked_with", type: "yesno", required: true, label: "Has your organisation worked with this agent (for example, received student applications from them)?" },
+  { key: "honest", type: "yesno", required: true, favourable: true, label: "In your experience, does the agent act honestly and ethically towards students and providers?" },
+  { key: "accurate_info", type: "yesno", required: true, favourable: true, label: "Does the agent give students accurate information about courses, fees and visa requirements?" },
+  { key: "complaints", type: "yesno", required: true, favourable: false, detail: true, label: "Are you aware of any complaints, concerns or incidents involving this agent?" },
+  { key: "recommend", type: "yesno", required: true, favourable: true, label: "Would you recommend this agent to another education provider?" },
+  { key: "comments", type: "text", required: false, label: "Anything else we should know?" },
+]);
+
+// Regulatory and onboarding tasks (E5). due_basis: business = working days, calendar = calendar days.
+const TASK_TYPES = Object.freeze({
+  PRISMS_ADD: { category: "regulatory", label: "Add agent to PRISMS", ownerRole: ROLES.COE_ADMIN },
+  PRISMS_UPDATE: { category: "regulatory", label: "Update agent in PRISMS", ownerRole: ROLES.COE_ADMIN },
+  PRISMS_REMOVE: { category: "regulatory", label: "Remove agent from PRISMS", ownerRole: ROLES.COE_ADMIN },
+  ASQANET_START: { category: "regulatory", label: "ASQAnet notice: agreement start", ownerRole: ROLES.COMPLIANCE },
+  ASQANET_END: { category: "regulatory", label: "ASQAnet notice: agreement end", ownerRole: ROLES.COMPLIANCE },
+  WEBSITE_ADD: { category: "regulatory", label: "Add agent to the website list", ownerRole: ROLES.MARKETING },
+  WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.MARKETING },
+  S21B_REQUEST: { category: "regulatory", label: "Section 21B request", ownerRole: ROLES.COMPLIANCE },
+  INDUCTION: { category: "general", label: "Agent induction and staff training", ownerRole: ROLES.MARKETING },
+  GENERAL: { category: "general", label: "Task", ownerRole: null },
+});
+const TASK_TYPE_LIST = Object.freeze(Object.keys(TASK_TYPES));
+
+// Who may finish a task: its owner, or anyone with the type's role, or these management roles.
+const TASK_MANAGERS = Object.freeze([ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.COMPLIANCE]);
+
+// Manual status moves. Approve/reject is a recorded decision (Due diligence tab), Expired is automatic (Part 5).
 // "reason" = the person must say why.
 const AGENT_TRANSITIONS = Object.freeze({
   prospect: { applied: { roles: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING] } },
@@ -89,4 +123,5 @@ const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@
 module.exports = {
   ROLES, ROLE_LIST, STAFF_ROLES, INVITE_PERMISSIONS, PASSWORD_REGEX,
   AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, AGENT_TRANSITIONS,
+  REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS,
 };

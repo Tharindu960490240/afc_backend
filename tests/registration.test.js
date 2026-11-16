@@ -137,9 +137,27 @@ test("only admins see and decide registrations", async () => {
   assert.equal((await json("POST", `/api/registrations/${r.id}/approve`, { token: agentT })).status, 403);
 });
 
+
+// Puts an applied agent through due diligence in the database (the real screens are tested separately), ready to be approved.
+const readyForApproval = async (email) => {
+  const row = (await pool.query(
+    `SELECT a.id, (SELECT id FROM agent_referees r WHERE r.agent_id = a.id AND r.deleted_at IS NULL ORDER BY created_at LIMIT 1) AS referee_id
+     FROM agents a JOIN agent_persons p ON p.agent_id = a.id JOIN users u ON u.id = p.portal_user_id WHERE u.email = $1`, [email])).rows[0];
+  await pool.query(`UPDATE agents SET status = 'due_diligence' WHERE id = $1`, [row.id]);
+  await pool.query(
+    `INSERT INTO agent_due_diligence (agent_id, abn_check_status, marn_check_status, prisms_check_status, coi_reviewed_at, preparers)
+     VALUES ($1,'verified','not_applicable','verified', now(), '{}') ON CONFLICT (agent_id) DO UPDATE SET
+       abn_check_status='verified', marn_check_status='not_applicable', prisms_check_status='verified', coi_reviewed_at=now(), preparers='{}'`, [row.id]);
+  await pool.query(
+    `INSERT INTO referee_checks (agent_id, referee_id, method, call_date, spoke_to, response_at, outcome, summary)
+     VALUES ($1,$2,'phone', current_date, 'Referee', now(), 'positive', 'Positive reference')`, [row.id, row.referee_id]);
+  return row.id;
+};
+
 test("approving lets the agent sign in; the decision is final and audited", async () => {
   const id = (await pool.query("SELECT id FROM users WHERE email='priya@agency.in'")).rows[0].id;
   outbox.length = 0;
+  await readyForApproval("priya@agency.in");
   assert.equal((await json("POST", `/api/registrations/${id}/approve`, { token: adminT })).status, 200);
   assert.ok(mails("priya@agency.in", /approved/i)[0]);
   const l = await login("priya@agency.in");
@@ -149,7 +167,7 @@ test("approving lets the agent sign in; the decision is final and audited", asyn
   assert.equal((await json("POST", `/api/registrations/${id}/reject`, { token: adminT, body: {} })).status, 409);
   const agents = (await json("GET", "/api/agents", { token: adminT })).body.data.map((a) => a.email);
   assert.ok(agents.includes("priya@agency.in")); // now available for an agreement
-  const n = (await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action IN ('agent.email_verified','agent.approved')")).rows[0].c;
+  const n = (await pool.query("SELECT count(*)::int AS c FROM audit_logs WHERE action IN ('agent.email_verified','agent.approved') AND coalesce(entity_type,'user') = 'user'")).rows[0].c;
   assert.equal(n, 2);
   assert.ok((await pool.query("SELECT 1 FROM audit_logs WHERE action='agent.registered'")).rowCount >= 1);
 });

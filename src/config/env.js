@@ -31,6 +31,8 @@ const env = {
   resetTtlMinutes: num(process.env.PASSWORD_RESET_TTL_MINUTES, 60),
   verifyTtlHours: num(process.env.EMAIL_VERIFY_TTL_HOURS, 24),
   uploadDir: process.env.UPLOAD_DIR || "storage",
+  evidenceMaxMb: num(process.env.EVIDENCE_MAX_MB, 3),
+  cronSecret: process.env.CRON_SECRET, // lets a hosting scheduler (Vercel Cron) run the daily jobs
   maxFailedLogins: num(process.env.MAX_FAILED_LOGINS, 5),
   lockoutMinutes: num(process.env.LOCKOUT_MINUTES, 15),
 

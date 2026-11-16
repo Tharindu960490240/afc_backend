@@ -355,7 +355,84 @@ function sendAgentRejected({ to, firstName, reason }) {
   });
 }
 
+// ---------- Part 2: due diligence and tasks ----------
+// E1-4: the referee gets a link to the online reference form
+function sendReferenceRequest({ to, refereeName, agentName, officerName, link, reminder = false }) {
+  return deliver(to, reminder ? `Reminder: reference for ${agentName}` : `Reference request for ${agentName}`, {
+    preheader: `${agentName} has named you as a referee.`,
+    title: reminder ? "Reference still needed" : "Reference request",
+    greeting: `Hello ${refereeName},`,
+    paragraphs: [
+      `**${agentName}** has applied to become an education agent for Australian Federation College and named you as a referee.`,
+      `${officerName || "The college"} would be grateful if you could answer a few short questions about your experience with them. It takes about five minutes. Your answers are used only to assess the application.`,
+    ],
+    action: { text: "Open the reference form", url: link },
+  });
+}
+
+function sendReferenceReceived({ to, firstName, agentName, refereeName, outcome, link }) {
+  return deliver(to, `Reference received for ${agentName}`, {
+    preheader: `${refereeName} answered the reference form.`,
+    title: "Reference received",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [`**${refereeName}** has answered the reference form for **${agentName}**. The answers look **${outcome}**.`],
+    action: { text: "Open the agent record", url: link },
+  });
+}
+
+// the director's or CEO's own wording (the rejection draft can be edited before it is sent)
+function sendAgentDecision({ to, firstName, subject, body }) {
+  return deliver(to, subject, {
+    preheader: subject,
+    title: subject,
+    greeting: `Hello ${firstName},`,
+    paragraphs: String(body).split(/\n{2,}/).map((p) => p.trim()).filter(Boolean),
+  });
+}
+
+// BR-08: the decision is due within 10 working days
+function sendDecisionTimer({ to, firstName, agentName, level, daysLeft, link }) {
+  const red = level === "red";
+  return deliver(to, red ? `Decision overdue: ${agentName}` : `Decision due soon: ${agentName}`, {
+    preheader: red ? "The 10 working-day decision time is up." : "Day 7 of 10 working days.",
+    title: red ? "Agent decision overdue" : "Agent decision due soon",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      red
+        ? `The application from **${agentName}** has passed the 10 working-day decision time. Please decide as soon as possible.`
+        : `The application from **${agentName}** is at day 7 of 10 working days. ${daysLeft} working day${daysLeft === 1 ? "" : "s"} left to decide.`,
+    ],
+    action: { text: "Open the application", url: link },
+  });
+}
+
+// E5-1: reminders and escalation
+function sendTaskAlert({ to, firstName, title, agentName, dueDate, level, link }) {
+  const heading = level === "escalated" ? "Task escalated" : level === "overdue" ? "Task overdue" : "Task due soon";
+  return deliver(to, `${heading}: ${title}`, {
+    preheader: `${title}${agentName ? ` (${agentName})` : ""}`,
+    title: heading,
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `**${title}**${agentName ? ` for **${agentName}**` : ""} is ${level === "due" ? "due" : "overdue"} (due ${dueDate}).`,
+      level === "escalated" ? "It has been escalated to you because it is still open." : "Please complete it and add the evidence on the task board.",
+    ],
+    action: { text: "Open the task board", url: link },
+  });
+}
+
+function sendTaskAssigned({ to, firstName, title, agentName, dueDate, link }) {
+  return deliver(to, `New task: ${title}`, {
+    preheader: `Due ${dueDate}`,
+    title: "A task was assigned to you",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [`**${title}**${agentName ? ` for **${agentName}**` : ""}, due **${dueDate}**.`],
+    action: { text: "Open the task board", url: link },
+  });
+}
+
 module.exports = {
+  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin,
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,

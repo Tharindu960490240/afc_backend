@@ -10,6 +10,10 @@ const email = require("./emailService");
 const repo = require("../repositories/agreementRepo");
 const audit = require("../repositories/auditRepo");
 const { ROLES } = require("../const");
+const certificatePdf = require("./certificatePdf");
+
+// Staff who work with agents may open any agreement; the CEO (and an administrator) countersign.
+const STAFF_VIEW = [ROLES.ADMIN, ROLES.CEO, ROLES.DIRECTOR, ROLES.MARKETING, ROLES.COMPLIANCE, ROLES.COE_ADMIN];
 
 const OPEN = ["sent", "submitted", "rejected"];
 const NOT_FOUND = "Agreement not found.";
@@ -22,7 +26,7 @@ const fullName = (o, p = "") => `${o[`${p}first_name`] || ""} ${o[`${p}last_name
 // An agent can only see their own agreements (404 so ids cannot be probed).
 async function loadFor(actor, id) {
   const agreement = await repo.findById(id);
-  if (!agreement || (actor.role !== ROLES.ADMIN && agreement.agent_id !== actor.id)) {
+  if (!agreement || (!STAFF_VIEW.includes(actor.role) && agreement.agent_id !== actor.id)) {
     throw new AppError(404, NOT_FOUND);
   }
   return agreement;
@@ -131,6 +135,7 @@ async function approve(actor, id, body, ctx) {
   const sig = signatureFrom(body, ctx, { position: body.position || "Authorised representative" });
 
   let storedKey = null;
+  let certKey = null;
   try {
     await withTransaction(async (client) => {
       const row = await repo.lockById(client, id);
@@ -147,14 +152,27 @@ async function approve(actor, id, body, ctx) {
         originalName: `${docs.reference(id)} ${current.title} - signed.pdf`.replace(/[\\/\r\n]/g, "_"),
       });
 
+      // certificate of appointment (E1-5), stored next to the signed agreement
+      const cert = await certificatePdf.render(await repo.findForDocument(id, client));
+      const certSaved = await storage.save(cert, "pdf");
+      certKey = certSaved.key;
+      await repo.addFile(client, {
+        agreementId: id, kind: "certificate", ...certSaved, mime: "application/pdf", uploadedBy: actor.id,
+        originalName: `${docs.reference(id)} Certificate of appointment.pdf`,
+      });
+
       await repo.addEvent(client, id, actor.id, "approved", `Countersigned. Valid from ${effective} for ${months} months`);
       await audit.log({ actorId: actor.id, action: "agreement.approved", entityType: "agreement", entityId: id, ...ctx }, client);
     });
   } catch (err) {
     if (storedKey) await storage.remove(storedKey); // do not leave an orphan file behind
+    if (certKey) await storage.remove(certKey);
     throw err;
   }
   const done = await repo.findById(id);
+  // E1-6: the agent moves to Onboarding and the PRISMS, ASQAnet, website and induction tasks are created
+  await require("./taskService").onAgreementCountersigned(id, actor, ctx)
+    .catch((e) => console.error("onboarding tasks failed:", e.message));
   email.sendAgreementApproved({ to: current.agent_email, firstName: current.agent_first_name, title: current.title, expiresAt: done.expires_at });
   return done;
 }
@@ -177,7 +195,7 @@ async function cancel(actor, id, reason, ctx) {
 // ---------- reading ----------
 async function list(actor, { status, agent_id: agentId, page, limit }) {
   const { rows, total } = await repo.list({
-    agentId: actor.role === ROLES.ADMIN ? agentId : actor.id,
+    agentId: STAFF_VIEW.includes(actor.role) ? agentId : actor.id,
     status, limit, offset: (page - 1) * limit,
   });
   return { rows, total, page, limit };

@@ -31,6 +31,23 @@ const audits = async (action, entityId) =>
 
 let agentId;
 
+// Puts an applied agent through due diligence in the database (the real screens are tested separately), ready to be approved.
+const readyForApproval = async (email) => {
+  const row = (await pool.query(
+    `SELECT a.id, (SELECT id FROM agent_referees r WHERE r.agent_id = a.id AND r.deleted_at IS NULL ORDER BY created_at LIMIT 1) AS referee_id
+     FROM agents a JOIN agent_persons p ON p.agent_id = a.id JOIN users u ON u.id = p.portal_user_id WHERE u.email = $1`, [email])).rows[0];
+  await pool.query(`UPDATE agents SET status = 'due_diligence' WHERE id = $1`, [row.id]);
+  await pool.query(
+    `INSERT INTO agent_due_diligence (agent_id, abn_check_status, marn_check_status, prisms_check_status, coi_reviewed_at, preparers)
+     VALUES ($1,'verified','not_applicable','verified', now(), '{}') ON CONFLICT (agent_id) DO UPDATE SET
+       abn_check_status='verified', marn_check_status='not_applicable', prisms_check_status='verified', coi_reviewed_at=now(), preparers='{}'`, [row.id]);
+  await pool.query(
+    `INSERT INTO referee_checks (agent_id, referee_id, method, call_date, spoke_to, response_at, outcome, summary)
+     VALUES ($1,$2,'phone', current_date, 'Referee', now(), 'positive', 'Positive reference')`, [row.id, row.referee_id]);
+  return row.id;
+};
+
+
 // A complete, valid application form (website registration).
 const appForm = (over = {}) => ({
   first_name: "Priya", last_name: "Nair", email: "priya@nair.in", phone: "+91 98765 43210", password: PW, consent: true,
@@ -352,6 +369,11 @@ test("a website registration appears as Prospect, becomes Applied when the email
   assert.ok(mails("priya@nair.in", /received your agent application/i)[0]);
 
   const uid = (await pool.query("SELECT id FROM users WHERE email='priya@nair.in'")).rows[0].id;
+  // the Registrations screen uses the recorded decision, so it cannot approve before due diligence is done
+  const early = await json("POST", `/api/registrations/${uid}/approve`, { token: T.admin });
+  assert.equal(early.status, 409);
+  assert.match(early.body.message, /due diligence/i);
+  await readyForApproval("priya@nair.in");
   assert.equal((await json("POST", `/api/registrations/${uid}/approve`, { token: T.admin })).status, 200);
   assert.equal((await find()).status, "approved");
 });

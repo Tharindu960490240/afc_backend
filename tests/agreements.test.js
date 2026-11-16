@@ -213,10 +213,10 @@ test("countersign -> active for 12 months, final PDF stored, everyone can downlo
   assert.equal((exp.getFullYear() - eff.getFullYear()) * 12 + exp.getMonth() - eff.getMonth(), 12);
   assert.ok(lastMail("agent1@x.com", /approved/i));
   assert.ok(Number(a.days_left) >= 364);
-  assert.equal(filesOnDisk(), 1);
+  assert.equal(filesOnDisk(), 2); // the signed agreement and the certificate of appointment
 
   const detail = (await json("GET", `/api/agreements/${id}`, { token: agentT })).body.data;
-  assert.deepEqual(detail.files.map((f) => f.kind), ["final"]);
+  assert.deepEqual(detail.files.map((f) => f.kind).sort(), ["certificate", "final"]);
   assert.deepEqual(detail.events.map((e) => e.type), ["sent", "submitted", "rejected", "submitted", "approved"]);
   // the dates are now written into the wording
   assert.match(detail.document.map((b) => b.text).join(" "), new RegExp(docs.longDate(a.effective_date)));

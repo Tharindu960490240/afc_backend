@@ -111,6 +111,16 @@ async function decide(actor, id, approve, reason, ctx) {
   const target = await userRepo.findById(id);
   if (!target || target.role !== ROLES.AGENT) throw new AppError(404, "Registration not found.");
 
+  // Part 2: an application is decided on the agent record (due diligence, BR-06). This screen uses the same path.
+  const found = await require("../repositories/comsAgentRepo").findByPortalUser(id);
+  if (found) {
+    const row = (await require("../config/db").query(`SELECT status FROM users WHERE id=$1`, [id])).rows[0];
+    if (!row || row.status !== "pending_approval") throw new AppError(409, "This registration is not waiting for a decision.");
+    if (!approve && !String(reason || "").trim()) throw new AppError(400, "Please check the highlighted fields.", { errors: { reason: "Please give a reason" } });
+    await require("./dueDiligenceService").decide(actor, found.id, { decision: approve ? "approve" : "reject", reason: reason || "Approved", send_email: true }, ctx);
+    return;
+  }
+
   await withTransaction(async (client) => {
     const row = (await client.query(`SELECT status FROM users WHERE id=$1 FOR UPDATE`, [id])).rows[0];
     if (!row || row.status !== "pending_approval") {

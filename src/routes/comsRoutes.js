@@ -1,5 +1,6 @@
 const router = require("express").Router();
 const agents = require("../controllers/comsAgentController");
+const d = require("../controllers/comsDueDiligenceController");
 const misc = require("../controllers/comsMiscController");
 const exp = require("../controllers/exportController");
 const validate = require("../middlewares/validate");
@@ -25,6 +26,33 @@ router.post("/agents/:id/restore", validate(s.uuidParam, "params"), agents.resto
 router.post("/agents/:id/persons", validate(s.uuidParam, "params"), validate(s.createPerson), agents.addPerson);
 router.patch("/agents/:id/persons/:personId", validate(s.personParams, "params"), validate(s.updatePerson), agents.updatePerson);
 router.post("/agents/:id/persons/:personId/delete", validate(s.personParams, "params"), validate(s.agentDelete), agents.removePerson);
+
+// ---- Part 2: due diligence, referees, decision, agreement ----
+const idp = validate(s.uuidParam, "params");
+router.get("/agents/:id/due-diligence", idp, d.get);
+router.post("/agents/:id/referees", idp, validate(s.createReferee), d.addReferee);
+router.patch("/agents/:id/referees/:refereeId", validate(s.refereeParams, "params"), validate(s.updateReferee), d.updateReferee);
+router.post("/agents/:id/referees/:refereeId/delete", validate(s.refereeParams, "params"), validate(s.agentDelete), d.removeReferee);
+router.post("/agents/:id/referees/:refereeId/request", limits.sensitive, validate(s.refereeParams, "params"), d.request);
+router.post("/agents/:id/referees/:refereeId/phone-check", validate(s.refereeParams, "params"), validate(s.phoneCheck), d.phone);
+router.post("/agents/:id/reference-checks/:checkId/remind", limits.sensitive, validate(s.checkParams, "params"), d.remind);
+router.post("/agents/:id/reference-checks/:checkId/outcome", validate(s.checkParams, "params"), validate(s.referenceOutcome), d.outcome);
+router.post("/agents/:id/due-diligence/checks", idp, validate(s.dueDiligenceCheck), d.check);
+router.post("/agents/:id/due-diligence/declarations", idp, validate(s.declarations), d.declarations);
+router.post("/agents/:id/rejection-draft", idp, validate(s.agentDelete), d.draft);
+router.post("/agents/:id/decision", limits.sensitive, idp, validate(s.decision), d.decide);
+router.post("/agents/:id/agreement", limits.sensitive, idp, validate(s.sendAgentAgreement), d.sendAgreement);
+router.get("/files/:fileId/download", limits.sensitive, validate(s.fileParams, "params"), d.download);
+
+// ---- Part 2: task engine and regulatory task board ----
+router.get("/tasks/meta", d.taskMeta);
+router.get("/tasks/export", limits.sensitive, validate(s.tasksQuery, "query"), d.taskExport);
+router.get("/tasks", validate(s.tasksQuery, "query"), d.taskList);
+router.post("/tasks", validate(s.taskCreate), d.taskCreate);
+router.post("/tasks/:id/complete", limits.sensitive, idp, validate(s.taskComplete), d.taskComplete);
+router.post("/tasks/:id/assign", idp, validate(s.taskAssign), d.taskAssign);
+router.post("/tasks/:id/cancel", idp, validate(s.cancelTask), d.taskCancel);
+router.get("/tasks/:id/evidence", limits.sensitive, idp, d.taskEvidence);
 
 // ---- public-holiday calendar ----
 router.get("/holidays/export", limits.sensitive, exp.holidays);

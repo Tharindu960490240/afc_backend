@@ -16,6 +16,7 @@ const calendar = require("./calendarService");
 const { prismsMissing, applicationMissing } = require("./prisms");
 const { csvCell } = require("../utils/csv");
 const email = require("./emailService");
+const ddRepo = require("../repositories/dueDiligenceRepo");
 
 const ENTITY = "agent";
 const DECIDED = ["approved", "onboarding", "active", "under_review", "suspended", "expired", "terminated", "rejected"];
@@ -88,13 +89,14 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   need(actor, "read");
   const a = await repo.findById(id);
   if (!a || (a.deleted_at && (!includeDeleted || !allowed(actor, "restore")))) throw new AppError(404, "Agent not found.");
-  const [persons, referees, history, agreements, signed, activity] = await Promise.all([
+  const [persons, referees, history, agreements, signed, activity, tasks] = await Promise.all([
     repo.persons(id),
     repo.referees(id),
     repo.history(id),
     repo.agreements(id),
     repo.hasSignedAgreement(id),
     audit.search({ entityType: ENTITY, entityId: id, limit: 30, offset: 0 }),
+    require("./taskService").forAgent(id),
   ]);
   const base = shape(a);
   return {
@@ -105,6 +107,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     history,
     agreements,
     has_signed_agreement: signed,
+    tasks,
     sla: await slaFor(a),
     activity: activity.rows,
     permissions: Object.fromEntries(Object.keys(AGENT_PERMS).map((k) => [k, allowed(actor, k)])),
@@ -234,7 +237,7 @@ async function changeStatus(actor, id, { status: to, reason }, ctx) {
     const t = AGENT_TRANSITIONS[from]?.[to];
     if (!t) {
       if (from === "due_diligence" && ["approved", "rejected"].includes(to)) {
-        throw new AppError(409, "Approving or rejecting an agent is a decision made after due diligence. That step is not available yet.");
+        throw new AppError(409, "Approving or rejecting an agent is a recorded decision made after due diligence. Open the Due diligence tab and use Approve or Reject there.");
       }
       throw new AppError(409, `An agent cannot move from ${from.replace("_", " ")} to ${to.replace("_", " ")}.`);
     }
@@ -252,6 +255,7 @@ async function changeStatus(actor, id, { status: to, reason }, ctx) {
 
     await repo.setStatus(client, id, to, actor.id, { reason });
     await repo.addHistory(client, { agentId: id, from, to, reason, actorId: actor.id });
+    if (to === "due_diligence") await ddRepo.open(client, id, actor.id); // starts the checklist; the officer is the preparer (BR-06)
     await audit.log({ actorId: actor.id, action: "agent.status_changed", entityType: ENTITY, entityId: id, before: { status: from }, after: { status: to }, metadata: { reason: reason || null }, ...ctx }, client);
     return { from, to };
   });
@@ -354,8 +358,28 @@ async function recordMilestone(actor, id, { type, date }, ctx) {
   const when = date ? new Date(`${date}T12:00:00`) : new Date();
   await withTransaction(async (client) => {
     await repo.setMilestone(client, id, type, when, actor.id);
+    // the matching task on the board is finished by the same entry
+    await client.query(
+      `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $3, completion_note = 'Recorded on the agent record',
+         updated_at = now() WHERE agent_id = $1 AND type = $2 AND status = 'open' AND deleted_at IS NULL`,
+      [id, type === "prisms" ? "PRISMS_ADD" : "INDUCTION", actor.id],
+    );
     await audit.log({ actorId: actor.id, action: `agent.${type}_recorded`, entityType: ENTITY, entityId: id, after: { date: calendar.localDate(when) }, ...ctx }, client);
   });
+  await require("./taskService").maybeActivate(id, actor, ctx); // E1-7: Active once agreement, PRISMS and induction are recorded
+  return getDetail(actor, id);
+}
+
+// E1-5: the officer sends the agreement from the agent record
+async function sendAgreement(actor, id, body, ctx) {
+  need(actor, "sendAgreement");
+  const a = await repo.findById(id);
+  if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
+  if (a.status !== "approved") throw new AppError(409, "An agreement can be sent once the agent is approved and before onboarding starts.");
+  const people = await repo.persons(id);
+  const login = people.filter((p) => p.portal_user_id).sort((x, y) => Number(y.is_primary_contact) - Number(x.is_primary_contact))[0];
+  if (!login) throw new AppError(409, "This agent has no portal login yet, so the agreement cannot be sent. Send the application link first.");
+  await require("./agreementService").send(actor, { agent_id: login.portal_user_id, ...body }, ctx);
   return getDetail(actor, id);
 }
 
@@ -585,6 +609,6 @@ async function exportCsv(actor, q, ctx) {
 
 module.exports = {
   list, getDetail, meta, createFromEoi, sendApplicationLink, update, changeStatus, remove, restore,
-  addPerson, updatePerson, removePerson, recordMilestone,
+  addPerson, updatePerson, removePerson, recordMilestone, sendAgreement,
   linkNewPortalUser, saveApplication, myApplication, submitApplication, markApplicationReceived, acknowledge, syncDecision, approvalMissing, syncUserStatus, exportCsv, slaFor,
 };
