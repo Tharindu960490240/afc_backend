@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const { validAbnOrAcn } = require("../utils/abn");
-const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, TASK_TYPE_LIST } = require("../const");
+const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, TASK_TYPE_LIST, DOC_KINDS } = require("../const");
 
 const email = z.string().trim().toLowerCase().email().max(254);
 const name = z.string().trim().min(1).max(50).regex(/^[\p{L}][\p{L}\s'’.-]*$/u, "Invalid characters");
@@ -69,9 +69,37 @@ const applicationPerson = z.object({
 }).strict();
 const applicationReferee = z.object({
   name: z.string().trim().min(2, "Enter the referee's name").max(120),
-  organisation: z.string().trim().min(2, "Enter the referee's organisation").max(160),
+  position: z.string().trim().min(2, "Enter the referee's position").max(120),
+  organisation: z.string().trim().min(2, "Enter the referee's company name").max(160),
   email,
   phone,
+}).strict();
+
+// ----- AFC Education Agent Application Form V2.0, sections 1l-8 -----
+const short = (label, max = 200) => z.string().trim().min(1, `Enter ${label}`).max(max);
+const place = z.object({ location: short("the location", 160), details: z.string().trim().max(500).default("") }).strict();
+const recruitedRow = z.object({ sector: short("the sector", 120), students: z.coerce.number().int().min(0).max(1000000) }).strict();
+const yn = (label) => z.boolean({ error: `Please answer ${label}` });
+const applicationExtra = z.object({
+  services: z.array(short("a service", 200)).min(1, "List at least one service").max(10),                 // 1l
+  offshore_offices: z.array(place).max(10).default([]),                                                       // 1m
+  sub_contractors: z.array(place).max(10).default([]),                                                        // 1n
+  offshore_partners: z.array(place).max(10).default([]),                                                      // 1o
+  registrations: z.array(z.object({ number: short("the registration number", 60), country: short("the country", 80) }).strict())
+    .min(1, "Give at least one registration").max(10),                                                        // 2
+  recruited_australia: z.array(recruitedRow).max(10).default([]),                                             // 3a
+  recruited_other: z.array(recruitedRow).max(10).default([]),                                                 // 3b
+  esos_read: yn("whether you have read the ESOS Act 2000"),                                                   // 4a
+  esos_intend: z.boolean().nullable().default(null),
+  national_code_read: yn("whether you have read the National Code 2018"),                                    // 4b
+  national_code_intend: z.boolean().nullable().default(null),
+  experience_education: z.string().trim().min(10, "Describe your experience in the education industry").max(3000), // 5a
+  experience_other: z.string().trim().max(3000).default(""),                                                  // 5b
+  markets: z.array(z.object({ area: short("the area", 160), characteristics: z.string().trim().max(500).default("") }).strict())
+    .min(1, "Give at least one current market").max(15),                                                      // 6a
+  potential_markets: z.string().trim().max(2000).default(""),                                                 // 6b
+  memberships: z.array(short("an organisation", 160)).max(10).default([]),                                    // 7
+  services_to_afc: z.string().trim().min(10, "Outline the services you will provide to the college").max(3000), // 8
 }).strict();
 const applicationShape = {
   legal_name: z.string().trim().min(2, "Enter the legal name").max(200),
@@ -85,6 +113,11 @@ const applicationShape = {
   business_phone: z.union([phone, z.literal("")]).default(""),
   website: z.union([z.string().trim().max(300).url("Enter a full web address, for example https://example.com"), z.literal("")]).default(""),
   marn,
+  gst_registered: z.boolean({ error: "Please choose Yes or No" }),                                          // 1d
+  owner_name: z.string().trim().min(2, "Enter the name of the Chief Executive Officer or owner").max(160),   // 1h
+  staff_count: z.coerce.number().int().min(0, "Enter the number of staff").max(100000),                      // 1i
+  years_in_business: z.coerce.number().int().min(0, "Enter the number of years").max(300),                   // 1k
+  extra: applicationExtra,
   // the person filling in the form
   applicant_role: z.enum(["director", "staff"]),
   applicant_marn: marn,
@@ -96,6 +129,8 @@ const applicationShape = {
   coi_details: z.string().trim().max(2000).default(""),
   code_of_ethics: z.literal(true, { error: "You must accept the code of ethics" }),
   information_true: z.literal(true, { error: "Please confirm the information is correct" }),
+  privacy_agreed: z.literal(true, { error: "You must agree to the privacy notice" }),                        // 10
+  declaration_name: z.string().trim().min(2, "Type the name of the Chief Executive Officer or owner").max(160), // 11
 };
 // rules that look at several fields at once
 function checkApplication(v, ctx, applicantEmail) {
@@ -106,6 +141,9 @@ function checkApplication(v, ctx, applicantEmail) {
     if (v.applicant_role !== "director" && !v.people.some((p) => p.role === "director")) fail("people", "Add at least one director");
   }
   if (v.coi_declared && v.coi_details.length < 10) fail("coi_details", "Please describe the conflict of interest");
+  const x = v.extra;
+  if (x.esos_read === false && x.esos_intend === null) fail(["extra", "esos_intend"], "Please answer this question");
+  if (x.national_code_read === false && x.national_code_intend === null) fail(["extra", "national_code_intend"], "Please answer this question");
   const seen = new Set(applicantEmail ? [applicantEmail] : []);
   v.people.forEach((p, i) => {
     if (seen.has(p.email)) fail(["people", i, "email"], "This email is already on the list");
@@ -249,7 +287,7 @@ const personBody = {
 const createPerson = z.object(personBody).partial({ role: true, marn: true, involved_in_enrolments: true, location: true, is_primary_contact: true }).strict();
 const updatePerson = z.object({ ...personBody, training_completed_at: nullable(z.coerce.date()), active: z.boolean() })
   .partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to update");
-const milestone = z.object({ type: z.enum(["prisms", "induction"]), date: dateOnly.optional() }).strict();
+const milestone = z.object({ type: z.enum(["prisms", "induction", "sms_contact"]), date: dateOnly.optional() }).strict();
 const csvBool = z.enum(["true", "false"]).transform((v) => v === "true");
 const comsAgentsQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -275,6 +313,7 @@ const holidayBody = z.object({
 const upload = z.object({ name: z.string().trim().min(1).max(200), data: z.string().min(4) }).strict();
 const refereeBody = {
   name: z.string().trim().min(2).max(120),
+  position: nullable(z.string().trim().min(2).max(120)).optional(),
   organisation: z.string().trim().min(2).max(160),
   email,
   phone: nullable(phone).optional(),
@@ -358,7 +397,26 @@ const auditQuery = z.object({
   to: dateOnly.optional(),
 });
 
+// agent folder: documents, requests for information, commission and bonus (Part 2b)
+const uploadFile = z.object({ name: z.string().trim().min(1).max(255), data: z.string().min(10) }).strict();
+const agentDocument = z.object({
+  kind: z.enum(Object.keys(DOC_KINDS)),
+  label: z.string().trim().max(160).optional(),
+  file: uploadFile,
+}).strict();
+const documentParams = z.object({ id: z.string().uuid(), docId: z.string().uuid() });
+const documentReview = z.object({
+  status: z.enum(["accepted", "needs_update"]),
+  note: z.string().trim().max(1000).optional(),
+}).strict().refine((v) => v.status !== "needs_update" || (v.note && v.note.length >= 3), { message: "Say what needs to change", path: ["note"] });
+const infoRequest = z.object({ message: z.string().trim().min(10, "Write what you need from the agent").max(3000) }).strict();
+const agentTerms = z.object({
+  commission_terms: z.string().trim().min(3, "Describe the commission").max(2000),
+  bonus_terms: z.string().trim().max(2000).default(""),
+}).strict();
+
 module.exports = {
+  agentDocument, documentParams, documentReview, infoRequest, agentTerms,
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
   comsAgentsQuery, uuidParam, personParams, holidayBody, auditQuery,
   upload, createReferee, updateReferee, refereeParams, checkParams, phoneCheck, referenceOutcome, referenceAnswers,

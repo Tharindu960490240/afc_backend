@@ -69,12 +69,13 @@ const TASK_TYPES = Object.freeze({
   PRISMS_ADD: { category: "regulatory", label: "Add agent to PRISMS", ownerRole: ROLES.COE_ADMIN },
   PRISMS_UPDATE: { category: "regulatory", label: "Update agent in PRISMS", ownerRole: ROLES.COE_ADMIN },
   PRISMS_REMOVE: { category: "regulatory", label: "Remove agent from PRISMS", ownerRole: ROLES.COE_ADMIN },
-  ASQANET_START: { category: "regulatory", label: "ASQAnet notice: agreement start", ownerRole: ROLES.COMPLIANCE },
+  ASQANET_START: { category: "regulatory", label: "ASQAnet notice: agreement start", ownerRole: ROLES.COE_ADMIN },
   ASQANET_END: { category: "regulatory", label: "ASQAnet notice: agreement end", ownerRole: ROLES.COMPLIANCE },
-  WEBSITE_ADD: { category: "regulatory", label: "Add agent to the website list", ownerRole: ROLES.MARKETING },
+  WEBSITE_ADD: { category: "regulatory", label: "Add agent to the website list", ownerRole: ROLES.ADMIN },
   WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.MARKETING },
   S21B_REQUEST: { category: "regulatory", label: "Section 21B request", ownerRole: ROLES.COMPLIANCE },
   INDUCTION: { category: "general", label: "Agent induction and staff training", ownerRole: ROLES.MARKETING },
+  COMMISSION_REPORT: { category: "general", label: "Report commission and bonus to Accounts", ownerRole: ROLES.MARKETING },
   GENERAL: { category: "general", label: "Task", ownerRole: null },
 });
 const TASK_TYPE_LIST = Object.freeze(Object.keys(TASK_TYPES));
@@ -120,8 +121,19 @@ const AGENT_TRANSITIONS = Object.freeze({
 // same rule as the React sign-up form
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,72}$/;
 
+// The agent folder (procedure step 1). 'required' ones must be received and accepted before approval.
+const DOC_KINDS = Object.freeze({
+  business_registration: { label: "Business registration certificate", required: true, file: "Business registration" },
+  agency_profile: { label: "Organisational profile", required: true, file: "Agency profile" },
+  mara_certificate: { label: "Certificate of registration with MARA (if available)", required: false, file: "MARA certificate" },
+  application_form: { label: "Signed application form", required: false, file: "Application form" },
+  other: { label: "Other supporting document", required: false, file: "Supporting document" },
+});
+const REQUIRED_DOC_KINDS = Object.freeze(Object.keys(DOC_KINDS).filter((k) => DOC_KINDS[k].required));
+const DOC_STATUS = Object.freeze(["received", "accepted", "needs_update"]);
+
 module.exports = {
   ROLES, ROLE_LIST, STAFF_ROLES, INVITE_PERMISSIONS, PASSWORD_REGEX,
   AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, AGENT_TRANSITIONS,
-  REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS,
+  REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS, DOC_KINDS, REQUIRED_DOC_KINDS, DOC_STATUS,
 };

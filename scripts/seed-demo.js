@@ -10,6 +10,16 @@ const ts = (n) => new Date(Date.now() + n * 86400000).toISOString();
 const GOOD = { known_for: "About six years as a sub-agent for our group.", worked_with: true, honest: true, accurate_info: true, complaints: false, recommend: true, comments: "Reliable and well organised." };
 const BAD = { known_for: "Met at a conference.", worked_with: true, honest: false, accurate_info: false, complaints: true, complaints_detail: "Two students were given wrong visa advice.", recommend: false };
 
+const EXTRA = (a) => ({
+  services: ["Student counselling", "Course selection", "Visa document checking"], offshore_offices: [], sub_contractors: [], offshore_partners: [],
+  registrations: [{ number: "REG-" + a.name.length * 977, country: a.country }],
+  recruited_australia: [{ sector: "VET", students: 25 }], recruited_other: [{ sector: "Schools (UK)", students: 10 }],
+  esos_read: true, esos_intend: null, national_code_read: true, national_code_intend: null,
+  experience_education: "Over six years placing students with Australian providers.", experience_other: "",
+  markets: [{ area: a.country, characteristics: "Growing demand for vocational study" }], potential_markets: "", memberships: ["Local education agents association"],
+  services_to_afc: "Recruit and counsel students, check documents and refer enrolments to the college.",
+});
+
 const AGENTS = [
   { name: "Demo - Mekong Education Services", country: "Vietnam", email: "mekong@demo.example", status: "applied", received: -2 },
   { name: "Demo - Himalaya Study Bridge", country: "Nepal", email: "himalaya@demo.example", status: "due_diligence", received: -3,
@@ -50,6 +60,22 @@ async function main() {
       [a.name, a.country, a.email, a.status, "1 Sample Street, " + a.country, "5" + String(10000000 + a.name.length * 104729).slice(0, 10), marn, marketing,
        ts(a.received), day(a.received + 14), a.prisms ? ts(a.decided + 5) : null, a.induction ? ts(a.decided + 10) : null, a.reason || null]);
     const id = ag.id;
+    await pool.query(
+      `UPDATE agents SET gst_registered = $2, owner_name = $3, staff_count = $4, years_in_business = $5, application_extra = $6::jsonb,
+         privacy_agreed_at = application_submitted_at, declaration_name = $3, declaration_at = application_submitted_at,
+         sms_contact_at = CASE WHEN $7 THEN application_received_at + interval '1 day' END,
+         commission_terms = $8, bonus_terms = $9, terms_recorded_at = CASE WHEN $8::text IS NOT NULL THEN now() END WHERE id = $1`,
+      [id, a.country === "Australia", "Owner of " + a.name.replace("Demo - ", ""), 8, 6, JSON.stringify(EXTRA(a)), a.status !== "applied",
+       a.status === "active" ? "10% of tuition for each enrolled student" : null, a.status === "active" ? "$500 after 10 enrolments in a year" : null]);
+    if (a.status !== "applied") {
+      for (const kind of ["business_registration", "agency_profile"]) {
+        const f = (await pool.query(
+          `INSERT INTO coms_files (kind, original_name, storage_key, mime_type, size_bytes, sha256) VALUES ('agent_document',$1,$2,'application/pdf',10,$3) RETURNING id`,
+          [`${kind}.pdf`, `demo/${id}/${kind}`, "0".repeat(64)])).rows[0].id;
+        await pool.query("INSERT INTO agent_documents (agent_id, kind, file_id, status, reviewed_by, reviewed_at) VALUES ($1,$2,$3,$4,$5,$6)",
+          [id, kind, f, a.checks ? "accepted" : "received", a.checks ? marketing : null, a.checks ? ts(a.received + 1) : null]);
+      }
+    }
     await pool.query("INSERT INTO agent_persons (agent_id,name,email,role,is_director,is_primary_contact,involved_in_enrolments,created_by) VALUES ($1,$2,$3,'director',true,true,true,$4)", [id, "Director of " + a.name.replace("Demo - ", ""), "director." + a.email, marketing]);
     if (["due_diligence", "approved", "onboarding", "active", "rejected"].includes(a.status)) {
       await pool.query(
@@ -75,16 +101,18 @@ async function main() {
       }
     }
     if (a.tasks) {
+      const admin = await staff("admin");
       const rows = [["PRISMS_ADD", `Add ${a.name} to PRISMS`, "regulatory", coe, "coe_admin", 5],
-                    ["ASQANET_START", `Send the ASQAnet notice for ${a.name}`, "regulatory", compliance, "compliance", 30],
-                    ["WEBSITE_ADD", `Add ${a.name} to the website agent list`, "regulatory", marketing, "marketing_officer", 5],
+                    ["ASQANET_START", `Report ${a.name} to ASQAnet`, "regulatory", coe, "coe_admin", 5],
+                    ["WEBSITE_ADD", `List ${a.name} on the AFC website`, "regulatory", admin, "admin", 5],
+                    ["COMMISSION_REPORT", `Record commission and bonus for ${a.name} and report to Accounts`, "general", marketing, "marketing_officer", 5],
                     ["INDUCTION", `Induct ${a.name} and record staff training`, "general", marketing, "marketing_officer", 30]];
       for (const [type, title, cat, owner, role, due] of rows) {
         const done = a.tasks === "done";
         await pool.query(
           `INSERT INTO coms_tasks (category,type,title,agent_id,trigger_event,trigger_date,due_date,due_basis,owner_id,owner_role,status,completed_at,completed_by,completion_note,created_by)
            VALUES ($1,$2,$3,$4,'agreement.countersigned',$5,$6,$7,$8,$9,$10,$11,$12,$13,$8)`,
-          [cat, type, title, id, day(a.decided + 3), day(a.decided + 3 + due), cat === "regulatory" && type !== "ASQANET_START" ? "business" : "calendar", owner, role,
+          [cat, type, title, id, day(a.decided + 3), day(a.decided + 3 + due), type === "INDUCTION" ? "calendar" : "business", owner, role,
            done ? "done" : "open", done ? ts(a.decided + 6) : null, done ? owner : null, done ? "Completed (sample data)." : null]);
       }
     }

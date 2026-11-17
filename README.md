@@ -144,3 +144,19 @@ Assumptions to confirm with the client
 - PRISMS and website listing tasks are due in 5 working days; induction in 30 calendar days; the ASQAnet notice 30 calendar days from the agreement start (shown as the legal deadline; alert at day 20, escalation at day 25).
 - Reference emails are sent from the system address and name the college officer.
 - Virus scanning and Microsoft 365 storage for evidence are a later step; files are stored privately on the server.
+
+## Part 2b: the AFC application form V2.0 and the "Processing Agent Application" procedure
+
+**Run `npm run migrate`** (adds migration 008). Then `npm run seed:demo` loads sample agents (remove with `npm run seed:demo -- --remove`).
+
+Application form (AFC-EAAF V2.0). The website and portal form now asks every section of the college's PDF: company profile (GST, CEO/owner, staff, years, services, offshore offices, sub-contractors, offshore partners), registrations, recruiting experience (Australian and other sectors), ESOS Act / National Code familiarity, personal experience, markets, memberships, services to the college, referees (company, contact, position, phone, email), privacy notice and the CEO/owner declaration. The long lists are stored in `agents.application_extra` (JSON), the searchable answers in their own columns. Staff can download the completed form as a PDF (`GET /api/coms/agents/:id/application.pdf`).
+Conflict of interest is kept as an extra declaration required by the COMS handover.
+
+Procedure steps
+1. **Agent folder:** documents (business registration, organisational profile, MARA certificate, other) are filed on the agent record, reviewed one by one (accepted / needs update) and downloaded with a filing name `<Agency> - <Document> - <date>.<ext>`. Staff can email the agent "more information needed" (the email lists documents needing an update). Approval is blocked until the business registration certificate and organisational profile are accepted (for applications made on the form). Website applicants cannot sign in before approval, so they email their documents and staff add them; invited agents can upload in the portal.
+2. **SMS contact:** recorded on the agent record (`POST /coms/agents/:id/milestones` with `type: sms_contact`). Shown as a warning on the due-diligence checklist until recorded; it does not block approval.
+3. **Referee verification:** unchanged from Part 2 (at least one positive).
+4. **Agreement** and 5. **signing:** unchanged (the certificate of appointment is generated on countersign).
+6. **Reporting:** on countersign, five tasks are created: PRISMS (CoE Administrator), ASQAnet (CoE Administrator), website listing (Administration), record and report commission and bonus (Marketing), induction. PRISMS, ASQAnet and website are due in 5 working days. The 30-day legal deadline for ASQAnet is kept as a backstop (alert at day 20, escalation at day 25). Every user in the responsible role is emailed. Saving the commission and bonus on the agent record (`POST /coms/agents/:id/terms`) emails AFC Accounts and finishes the commission task.
+
+Assumptions to confirm: "AFC Administration" is the `admin` role; "COE Administrator" is `coe_admin`; the 5 days are working days; accepted documents may not be removed by the agent.

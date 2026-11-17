@@ -18,6 +18,8 @@ const PW = "Passw0rd@1";
 const T = {};
 
 const json = async (method, p, { token, body, headers } = {}) => {
+  if (require("./form2").needsV2(method, p)) body = require("./form2").v2(body);
+  if (require("./form2").needsDocs(method, p)) await require("./form2").acceptAllDocuments(pool);
   const res = await fetch(base + p, {
     method,
     headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(headers || {}) },
@@ -351,22 +353,24 @@ test("an agreement is sent from the agent record, signed by the agent, countersi
 });
 
 // ------------------------------------------------------------------ T-03
-test("countersigning moves the agent to Onboarding and creates the four tasks with correct due dates (T-03)", async () => {
+test("countersigning moves the agent to Onboarding and creates the five tasks with correct due dates (T-03)", async () => {
   const rec = (await get(`/api/coms/agents/${A}`, "director")).body.data;
   assert.equal(rec.status, "onboarding");
   assert.equal(rec.history[0].to_status, "onboarding");
-  assert.equal(rec.tasks.length, 4);
+  assert.equal(rec.tasks.length, 5);
   const by = Object.fromEntries(rec.tasks.map((t) => [t.type, t]));
   const today = calendar.localDate();
   const effective = (await pool.query(`SELECT to_char(effective_date,'YYYY-MM-DD') AS d FROM agreements WHERE status='active'`)).rows[0].d;
   assert.equal(by.PRISMS_ADD.due_date, await calendar.addBusinessDays(today, 5), "5 working days, public holidays honoured");
   assert.equal(by.WEBSITE_ADD.due_date, await calendar.addBusinessDays(today, 5));
-  assert.equal(by.ASQANET_START.due_date, calendar.addDays(effective, 30), "30 calendar days from the agreement start");
-  assert.equal(by.ASQANET_START.legal_deadline, by.ASQANET_START.due_date);
+  assert.equal(by.ASQANET_START.due_date, await calendar.addBusinessDays(today, 5), "within 5 days of signing (Processing Agent Application, step 6)");
+  assert.equal(by.ASQANET_START.legal_deadline, calendar.addDays(effective, 30), "30 calendar days from the agreement start is the legal backstop");
+  assert.equal(by.COMMISSION_REPORT.due_date, await calendar.addBusinessDays(today, 5));
   assert.equal(by.INDUCTION.due_date, calendar.addDays(today, 30));
   assert.equal(by.PRISMS_ADD.owner_name, "Coe Test");
-  assert.equal(by.ASQANET_START.owner_name, "Compliance Test");
-  assert.equal(by.WEBSITE_ADD.owner_name, "Marketing Test");
+  assert.equal(by.ASQANET_START.owner_name, "Coe Test", "the CoE administrator reports to ASQAnet and PRISMS");
+  assert.equal(by.WEBSITE_ADD.owner_role, "admin", "AFC Administration lists the agent on the website");
+  assert.equal(by.COMMISSION_REPORT.owner_name, "Marketing Test");
   assert.equal(by.INDUCTION.owner_name, "Marketing Test");
   assert.ok(rec.tasks.every((t) => t.status === "open" && !t.overdue));
   assert.equal((await audits("agent.onboarding_started", A)).length, 1);
@@ -374,7 +378,7 @@ test("countersigning moves the agent to Onboarding and creates the four tasks wi
   // running it again creates nothing new (a retry after a failure is safe)
   const agId = (await pool.query(`SELECT id FROM agreements WHERE status='active'`)).rows[0].id;
   await tasksSvc.onAgreementCountersigned(agId, { id: null, role: "admin" }, {});
-  assert.equal((await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agent_id=$1`, [A])).rows[0].c, 4);
+  assert.equal((await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agent_id=$1`, [A])).rows[0].c, 5);
   // BR-01 / BR-02: it cannot be made Active by hand yet
   const blocked = await post(`/api/coms/agents/${A}/status`, "director", { status: "active" });
   assert.equal(blocked.status, 409);
@@ -385,21 +389,21 @@ test("countersigning moves the agent to Onboarding and creates the four tasks wi
 test("the task board lists, filters and exports regulatory tasks; the export is logged", async () => {
   const all = await get("/api/coms/tasks?limit=50", "compliance");
   assert.equal(all.status, 200);
-  assert.equal(all.body.data.length, 4);
-  assert.equal(all.body.pagination.total, 4);
+  assert.equal(all.body.data.length, 5);
+  assert.equal(all.body.pagination.total, 5);
   assert.equal((await json("GET", "/api/coms/tasks")).status, 401);
   assert.equal((await get("/api/coms/tasks?type=PRISMS_ADD", "compliance")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?type=PRISMS_ADD,INDUCTION", "compliance")).body.data.length, 2);
   assert.equal((await get("/api/coms/tasks?overdue=true", "compliance")).body.data.length, 0);
-  assert.equal((await get(`/api/coms/tasks?agent_id=${A}`, "compliance")).body.data.length, 4);
-  assert.equal((await get("/api/coms/tasks?owner=me", "coe")).body.data.length, 1);
-  assert.equal((await get("/api/coms/tasks?search=delta", "compliance")).body.data.length, 4);
-  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 10);
+  assert.equal((await get(`/api/coms/tasks?agent_id=${A}`, "compliance")).body.data.length, 5);
+  assert.equal((await get("/api/coms/tasks?owner=me", "coe")).body.data.length, 2);
+  assert.equal((await get("/api/coms/tasks?search=delta", "compliance")).body.data.length, 5);
+  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 11);
 
   const csv = await get("/api/coms/tasks/export?status=all", "compliance");
   assert.equal(csv.status, 200);
   const lines = String(csv.body).replace(/^﻿/, "").split("\r\n");
-  assert.equal(lines.length, 5);
+  assert.equal(lines.length, 6);
   assert.match(lines[0], /^Task,Type,Category,Agent,Owner,Due/);
   assert.equal((await audits("task.exported")).length, 1);
 });
@@ -569,7 +573,7 @@ test("a safety-net job moves an approved agent with a signed agreement to Onboar
     `INSERT INTO agreements (agent_id, status, validity_months, effective_date, expires_at, title) VALUES ($1,'active',12,current_date,current_date + 365,'Agreement')`, [uid]);
   assert.equal(await daily.reconcileOnboarding(), 1);
   assert.equal((await pool.query(`SELECT status FROM agents WHERE id=$1`, [G])).rows[0].status, "onboarding");
-  assert.equal((await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agent_id=$1`, [G])).rows[0].c, 4);
+  assert.equal((await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agent_id=$1`, [G])).rows[0].c, 5);
 });
 
 // ------------------------------------------------------------------ scheduler endpoint

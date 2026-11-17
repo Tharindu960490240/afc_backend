@@ -88,13 +88,17 @@ async function createOnboardingTasks(client, { agent, agreement, actorId }) {
   const today = calendar.localDate();
   const prisms = await calendar.addBusinessDays(today, 5);        // PRISMS: 5 working days
   const web = await calendar.addBusinessDays(today, 5);           // website: 5 days (working days)
-  const asqa = calendar.addDays(start, 30);                       // ASQAnet: 30 calendar days from the agreement start (legal)
+  // Processing Agent Application, step 6: website, ASQAnet and PRISMS within 5 days of signing
+  const asqa = await calendar.addBusinessDays(today, 5);
+  const asqaLegal = calendar.addDays(start, 30);                  // ESOS reporting backstop (BR-09): alert at day 20, escalate at day 25
+  const commission = await calendar.addBusinessDays(today, 5);    // report commission and bonus to Accounts
   const induction = calendar.addDays(today, 30);                  // induction: 30 days after approval (proposed)
   const manager = agent.account_manager_id;
   const spec = [
     ["PRISMS_ADD", `Add ${agent.legal_name} to PRISMS`, prisms, "business", null, ROLES.COE_ADMIN, null],
-    ["ASQANET_START", `Send the ASQAnet notice for ${agent.legal_name}`, asqa, "calendar", asqa, ROLES.COMPLIANCE, null],
-    ["WEBSITE_ADD", `Add ${agent.legal_name} to the website agent list`, web, "business", null, ROLES.MARKETING, null],
+    ["ASQANET_START", `Report ${agent.legal_name} to ASQAnet`, asqa, "business", asqaLegal, ROLES.COE_ADMIN, null],
+    ["WEBSITE_ADD", `List ${agent.legal_name} on the AFC website`, web, "business", null, ROLES.ADMIN, null],
+    ["COMMISSION_REPORT", `Record commission and bonus for ${agent.legal_name} and report to Accounts`, commission, "business", null, ROLES.MARKETING, null],
     ["INDUCTION", `Induct ${agent.legal_name} and record staff training`, induction, "calendar", null, ROLES.MARKETING, manager],
   ];
   const created = [];
@@ -104,7 +108,7 @@ async function createOnboardingTasks(client, { agent, agreement, actorId }) {
       category: TASK_TYPES[type].category, type, title, agentId: agent.id, agreementId: agreement.id, triggerEvent: "agreement_countersigned",
       triggerDate: today, dueDate: due, dueBasis: basis, legalDeadline: legal, ownerId, ownerRole: role, actorId,
     });
-    if (id) created.push({ id, ownerId });
+    if (id) created.push({ id, ownerId, role });
   }
   return created;
 }
@@ -128,7 +132,11 @@ async function onAgreementCountersigned(agreementId, actor, ctx) {
     }, client);
     return tasks;
   });
-  for (const t of created) if (t.ownerId && t.ownerId !== actor.id) await notifyAssigned(t.ownerId, t.id);
+  // step 6: everyone in the responsible team hears about it (for example the CoE administrators), not only the first owner
+  for (const t of created) {
+    const team = (await repo.usersWithRoles([t.role])).map((u) => u.id);
+    for (const uid of new Set([...(t.ownerId ? [t.ownerId] : []), ...team])) if (uid !== actor.id) await notifyAssigned(uid, t.id);
+  }
   return created;
 }
 
@@ -166,6 +174,10 @@ async function complete(actor, id, { note, file }, ctx) {
         const saved = await storage.save(up.buffer, up.ext, "coms");
         key = saved.key;
         fileId = await ddRepo.insertFile(client, { kind: "task_evidence", name: up.name, ...saved, mime: up.mime, actorId: actor.id });
+      }
+      if (t.type === "COMMISSION_REPORT") {
+        const ag = await agentRepo.findById(t.agent_id, client);
+        if (!ag || !ag.commission_terms) throw fieldError("note", "Record the commission and bonus on the agent record first. That also sends them to Accounts.");
       }
       await repo.complete(client, id, { note, fileId }, actor.id);
       if (t.agent_id && t.type === "PRISMS_ADD") await agentRepo.setMilestone(client, t.agent_id, "prisms", new Date(), actor.id);

@@ -2,6 +2,7 @@ const router = require("express").Router();
 const agents = require("../controllers/comsAgentController");
 const d = require("../controllers/comsDueDiligenceController");
 const misc = require("../controllers/comsMiscController");
+const docsCtrl = require("../controllers/comsDocumentsController");
 const exp = require("../controllers/exportController");
 const validate = require("../middlewares/validate");
 const limits = require("../middlewares/rateLimit");
@@ -42,6 +43,15 @@ router.post("/agents/:id/due-diligence/declarations", idp, validate(s.declaratio
 router.post("/agents/:id/rejection-draft", idp, validate(s.agentDelete), d.draft);
 router.post("/agents/:id/decision", limits.sensitive, idp, validate(s.decision), d.decide);
 router.post("/agents/:id/agreement", limits.sensitive, idp, validate(s.sendAgentAgreement), d.sendAgreement);
+// ---- Part 2b: the agent folder, requests for information, commission and bonus ----
+router.get("/agents/:id/documents", idp, docsCtrl.list);
+router.post("/agents/:id/documents", limits.sensitive, idp, validate(s.agentDocument), docsCtrl.upload);
+router.post("/agents/:id/documents/:docId/review", validate(s.documentParams, "params"), validate(s.documentReview), docsCtrl.review);
+router.post("/agents/:id/documents/:docId/delete", validate(s.documentParams, "params"), validate(s.agentDelete), docsCtrl.remove);
+router.get("/agents/:id/documents/:docId/download", limits.sensitive, validate(s.documentParams, "params"), docsCtrl.download);
+router.post("/agents/:id/request-information", limits.sensitive, idp, validate(s.infoRequest), docsCtrl.requestInfo);
+router.get("/agents/:id/application.pdf", limits.sensitive, idp, docsCtrl.applicationPdf);
+router.post("/agents/:id/terms", idp, validate(s.agentTerms), docsCtrl.terms);
 router.get("/files/:fileId/download", limits.sensitive, validate(s.fileParams, "params"), d.download);
 
 // ---- Part 2: task engine and regulatory task board ----

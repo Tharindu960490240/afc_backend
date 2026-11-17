@@ -13,6 +13,8 @@ const PW = "Passw0rd@1";
 const T = {}; // tokens by role
 
 const json = async (method, p, { token, body } = {}) => {
+  if (require("./form2").needsV2(method, p)) body = require("./form2").v2(body);
+  if (require("./form2").needsDocs(method, p)) await require("./form2").acceptAllDocuments(pool);
   const res = await fetch(base + p, {
     method,
     headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -510,7 +512,7 @@ test("a website application stores every PRISMS field, the people, two referees 
   assert.deepEqual(d.application_missing, []);
   const ack = mails("owner@harbour.com.au", /received your agent application/i)[0];
   assert.ok(ack);
-  assert.doesNotMatch(ack.text, /please send us/i, "nothing left to chase");
+  assert.match(ack.text, /Business registration certificate/i, "asks for the documents still missing");
   assert.equal((await audits("agent.application_submitted", row.id)).length, 1);
   // the older agreements screens still see the same agency
   assert.equal((await pool.query("SELECT agency_name, business_number FROM agent_profiles ap JOIN users u ON u.id=ap.user_id WHERE u.email='owner@harbour.com.au'")).rows[0].agency_name, "Harbour Study Pty Ltd");

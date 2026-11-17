@@ -12,6 +12,8 @@ const PW = "Passw0rd@1";
 const NEW_PW = "Another@Pass9";
 
 const json = async (method, p, { token, body } = {}) => {
+  if (require("./form2").needsV2(method, p)) body = require("./form2").v2(body);
+  if (require("./form2").needsDocs(method, p)) await require("./form2").acceptAllDocuments(pool);
   const res = await fetch(base + p, {
     method,
     headers: { ...(body ? { "Content-Type": "application/json" } : {}), ...(token ? { Authorization: `Bearer ${token}` } : {}) },

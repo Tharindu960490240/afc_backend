@@ -77,7 +77,7 @@ const outcomeFor = (answers) =>
   REFERENCE_QUESTIONS.filter((q) => "favourable" in q).every((q) => answers[q.key] === q.favourable) ? "positive" : "negative";
 
 // ---------- the checklist (E1-4) ----------
-function buildChecklist(a, dd, referees, checks, persons) {
+function buildChecklist(a, dd, referees, checks, persons, docState) {
   const positive = checks.filter((c) => c.outcome === "positive").length;
   const failed = [];
   const item = (key, label, done, detail, { failedFlag } = {}) => {
@@ -89,6 +89,9 @@ function buildChecklist(a, dd, referees, checks, persons) {
   const items = [
     item("application", "Application complete (PRISMS fields)", prismsMissing(a, a.director_count).length === 0,
       prismsMissing(a, a.director_count).map((m) => m.label).join("; ") || null),
+    // procedure step 1: the documents the agent sent are in and have been reviewed. Applies to applications made on the form.
+    ...(a.application_submitted_at && docState ? [item("documents", "Application documents received and accepted", docState.complete,
+      docState.required.map((r) => `${r.label}: ${r.status === "missing" ? "not received" : r.status === "needs_update" ? "needs an update" : r.status}`).join("; "))] : []),
     item("referees", "Referee checks: at least one positive", positive >= 1,
       `${positive} positive of ${referees.length} referee${referees.length === 1 ? "" : "s"}`),
     item("abn", "ABN / business registration checked", !!dd.abn_check_status && dd.abn_check_status !== "failed", stat(dd.abn_check_status),
@@ -105,6 +108,7 @@ function buildChecklist(a, dd, referees, checks, persons) {
   ];
   const blockers = items.filter((i) => !i.done).map((i) => (i.failed ? `${i.label}: failed. Resolve it or reject the application.` : `${i.label} is not recorded yet.`));
   const warnings = [];
+  if (!a.sms_contact_at) warnings.push("The agent's contact has not been created in the student management system yet (procedure step 2).");
   if (positive === 1) warnings.push("Only one positive referee check. Two are recommended.");
   if (checks.some((c) => c.outcome === "negative")) warnings.push("A referee gave a negative reference. Read it before deciding.");
   if (a.coi_declared) warnings.push("The applicant declared a conflict of interest.");
@@ -115,8 +119,9 @@ function buildChecklist(a, dd, referees, checks, persons) {
 async function get(actor, agentId) {
   if (!allowed(actor, "dueDiligence") && !allowed(actor, "decide") && !allowed(actor, "read")) throw new AppError(403, "You do not have permission to do that.");
   const a = await loadAgent(agentId);
-  const [dd, referees, checks, persons] = await Promise.all([
+  const [dd, referees, checks, persons, docState] = await Promise.all([
     repo.find(agentId), agentRepo.referees(agentId), repo.checksFor(agentId), agentRepo.persons(agentId),
+    require("./agentDocumentService").checklistState(agentId),
   ]);
   const base = {
     questions: REFERENCE_QUESTIONS,
@@ -124,7 +129,7 @@ async function get(actor, agentId) {
     permissions: { record: allowed(actor, "dueDiligence"), decide: allowed(actor, "decide") },
   };
   if (!dd) return { ...base, opened: false, items: [], blockers: [], warnings: [], can_decide: false, status: a.status, decision: null };
-  const list = buildChecklist(a, dd, referees, checks, persons);
+  const list = buildChecklist(a, dd, referees, checks, persons, docState);
   const preparer = (dd.preparers || []).map(String).includes(String(actor.id));
   const decided = !!dd.decision;
   const sla = await require("./comsAgentService").slaFor(a);
@@ -413,7 +418,8 @@ async function decide(actor, agentId, body, ctx) {
     }
     if (approve) {
       const [referees, checks, persons] = await Promise.all([agentRepo.referees(agentId, client), repo.checksFor(agentId, client), agentRepo.persons(agentId, client)]);
-      const list = buildChecklist(a, dd, referees, checks, persons);
+      const docState = await require("./agentDocumentService").checklistState(agentId, client);
+      const list = buildChecklist(a, dd, referees, checks, persons, docState);
       const blockers = [...(a.status === "due_diligence" ? [] : ["Due diligence has not been started. Move the application to due diligence first."]), ...list.blockers];
       if (blockers.length) throw new AppError(409, `This agent cannot be approved yet. ${blockers.join(" ")}`, { blockers });
     }

@@ -58,15 +58,15 @@ const setDecision = (client, agentId, { decision, reason }, actorId) =>
 // ---------- referees (the people named on the form) ----------
 const findReferee = async (agentId, refereeId, client) =>
   (await q(client).query(
-    `SELECT id, name, organisation, email, phone FROM agent_referees WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL`,
+    `SELECT id, name, position, organisation, email, phone FROM agent_referees WHERE id = $1 AND agent_id = $2 AND deleted_at IS NULL`,
     [refereeId, agentId])).rows[0];
 const insertReferee = async (client, agentId, r, actorId) =>
   (await client.query(
-    `INSERT INTO agent_referees (agent_id, name, organisation, email, phone, created_by, updated_by, created_at)
-     VALUES ($1,$2,$3,lower($4),$5,$6,$6,clock_timestamp()) RETURNING id`,
-    [agentId, r.name, r.organisation, r.email, r.phone || null, actorId])).rows[0].id;
+    `INSERT INTO agent_referees (agent_id, name, position, organisation, email, phone, created_by, updated_by, created_at)
+     VALUES ($1,$2,$3,$4,lower($5),$6,$7,$7,clock_timestamp()) RETURNING id`,
+    [agentId, r.name, r.position || null, r.organisation, r.email, r.phone || null, actorId])).rows[0].id;
 async function updateReferee(client, id, patch, actorId) {
-  const cols = Object.keys(patch).filter((k) => ["name", "organisation", "email", "phone"].includes(k));
+  const cols = Object.keys(patch).filter((k) => ["name", "position", "organisation", "email", "phone"].includes(k));
   if (!cols.length) return;
   const sets = cols.map((c, i) => `${c} = $${i + 2}`);
   await client.query(

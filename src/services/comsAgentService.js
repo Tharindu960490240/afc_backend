@@ -12,6 +12,7 @@ const { changes } = require("../utils/diff");
 const repo = require("../repositories/comsAgentRepo");
 const userRepo = require("../repositories/userRepo");
 const audit = require("../repositories/auditRepo");
+const env = require("../config/env");
 const calendar = require("./calendarService");
 const { prismsMissing, applicationMissing } = require("./prisms");
 const { csvCell } = require("../utils/csv");
@@ -89,7 +90,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   need(actor, "read");
   const a = await repo.findById(id);
   if (!a || (a.deleted_at && (!includeDeleted || !allowed(actor, "restore")))) throw new AppError(404, "Agent not found.");
-  const [persons, referees, history, agreements, signed, activity, tasks] = await Promise.all([
+  const [persons, referees, history, agreements, signed, activity, tasks, docs] = await Promise.all([
     repo.persons(id),
     repo.referees(id),
     repo.history(id),
@@ -97,6 +98,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     repo.hasSignedAgreement(id),
     audit.search({ entityType: ENTITY, entityId: id, limit: 30, offset: 0 }),
     require("./taskService").forAgent(id),
+    require("./agentDocumentService").checklistState(id),
   ]);
   const base = shape(a);
   return {
@@ -108,6 +110,9 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     agreements,
     has_signed_agreement: signed,
     tasks,
+    documents: docs.docs,
+    documents_required: docs.required,
+    documents_complete: docs.complete,
     sla: await slaFor(a),
     activity: activity.rows,
     permissions: Object.fromEntries(Object.keys(AGENT_PERMS).map((k) => [k, allowed(actor, k)])),
@@ -349,25 +354,57 @@ async function removePerson(actor, id, personId, reason, ctx) {
 
 // ---------- onboarding evidence (BR-02) ----------
 async function recordMilestone(actor, id, { type, date }, ctx) {
-  need(actor, type === "prisms" ? "recordPrisms" : "recordInduction");
+  need(actor, type === "prisms" ? "recordPrisms" : type === "sms_contact" ? "dueDiligence" : "recordInduction");
   const a = await repo.findById(id);
   if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
-  if (!["approved", "onboarding", "active", "under_review"].includes(a.status)) {
+  if (type === "sms_contact") {
+    // procedure step 2: the contact is created in the student management system as soon as the application is in
+    if (a.status === "prospect") throw new AppError(409, "Record this once the application has been received.");
+  } else if (!["approved", "onboarding", "active", "under_review"].includes(a.status)) {
     throw new AppError(409, "This can only be recorded for an approved agent.");
   }
   const when = date ? new Date(`${date}T12:00:00`) : new Date();
   await withTransaction(async (client) => {
     await repo.setMilestone(client, id, type, when, actor.id);
     // the matching task on the board is finished by the same entry
-    await client.query(
+    if (type !== "sms_contact") await client.query(
       `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $3, completion_note = 'Recorded on the agent record',
          updated_at = now() WHERE agent_id = $1 AND type = $2 AND status = 'open' AND deleted_at IS NULL`,
       [id, type === "prisms" ? "PRISMS_ADD" : "INDUCTION", actor.id],
     );
     await audit.log({ actorId: actor.id, action: `agent.${type}_recorded`, entityType: ENTITY, entityId: id, after: { date: calendar.localDate(when) }, ...ctx }, client);
   });
-  await require("./taskService").maybeActivate(id, actor, ctx); // E1-7: Active once agreement, PRISMS and induction are recorded
+  if (type !== "sms_contact") await require("./taskService").maybeActivate(id, actor, ctx); // E1-7: Active once agreement, PRISMS and induction are recorded
   return getDetail(actor, id);
+}
+
+// Procedure step 6: record the commission and bonus in the agent list and report them to AFC Accounts
+async function recordTerms(actor, id, body, ctx) {
+  need(actor, "sendAgreement");
+  const a = await repo.findById(id);
+  if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
+  if (!["approved", "onboarding", "active"].includes(a.status)) throw new AppError(409, "Commission and bonus are recorded once the agent is approved.");
+  const first = !a.terms_recorded_at;
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE agents SET commission_terms = $2, bonus_terms = $3, terms_recorded_at = now(), terms_recorded_by = $4, updated_at = now(), updated_by = $4 WHERE id = $1`,
+      [id, body.commission_terms, body.bonus_terms || null, actor.id]);
+    await client.query(
+      `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $2, completion_note = 'Commission and bonus recorded and sent to Accounts',
+         updated_at = now() WHERE agent_id = $1 AND type = 'COMMISSION_REPORT' AND status = 'open' AND deleted_at IS NULL`, [id, actor.id]);
+    await audit.log({
+      actorId: actor.id, action: "agent.terms_recorded", entityType: ENTITY, entityId: id,
+      before: { commission_terms: a.commission_terms || null, bonus_terms: a.bonus_terms || null },
+      after: { commission_terms: body.commission_terms, bonus_terms: body.bonus_terms || null }, ...ctx,
+    }, client);
+  });
+  const accounts = await require("../repositories/taskRepo").usersWithRoles([ROLES.ACCOUNTS]);
+  accounts.forEach((u) => email.sendTermsReport({
+    to: u.email, firstName: u.first_name, agencyName: a.legal_name, country: a.country,
+    commission: body.commission_terms, bonus: body.bonus_terms, by: `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "A staff member",
+    link: `${env.frontendUrl}/coms/agents/${id}`,
+  }));
+  return { ...(await getDetail(actor, id)), accounts_notified: accounts.length, first };
 }
 
 // E1-5: the officer sends the agreement from the agent record
@@ -447,7 +484,9 @@ async function acknowledge(agentId) {
   const to = people.find((p) => p.portal_user_id) || people[0];
   if (!to) return;
   const referees = await repo.referees(agentId);
-  const missing = [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)].map((m) => m.label);
+  const docState = await require("./agentDocumentService").checklistState(agentId);
+  const missingDocs = docState.required.filter((r) => r.status === "missing").map((r) => `${r.label} (please reply with a copy)`);
+  const missing = [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)].map((m) => m.label).concat(missingDocs);
   await email.sendApplicationReceived({ to: to.email, firstName: to.name.split(" ")[0], legalName: a.legal_name, missing });
   await repo.markAcknowledged(agentId);
 }
@@ -495,7 +534,11 @@ async function saveApplication(client, agentId, user, app) {
   }
 
   await repo.replaceReferees(client, agentId, app.referees, user.id);
-  await repo.setApplication(client, agentId, { coi_declared: app.coi_declared, coi_details: app.coi_details }, user.id);
+  await repo.setApplication(client, agentId, {
+    coi_declared: app.coi_declared, coi_details: app.coi_details,
+    gst_registered: app.gst_registered, owner_name: app.owner_name, staff_count: app.staff_count, years_in_business: app.years_in_business,
+    extra: app.extra, declaration_name: app.declaration_name,
+  }, user.id);
   await audit.log({
     actorId: user.id, action: "agent.application_submitted", entityType: ENTITY, entityId: agentId,
     after: {
@@ -524,12 +567,15 @@ async function myApplication(user) {
       is_body_corporate: a.is_body_corporate, principal_address: a.principal_address || "",
       registered_office_address: a.registered_office_address || "", postal_address: a.postal_address || "",
       business_phone: a.phone || "", website: a.website || "", marn: a.marn || "",
+      gst_registered: a.gst_registered, owner_name: a.owner_name || "", staff_count: a.staff_count, years_in_business: a.years_in_business,
     },
+    extra: a.application_extra || {},
+    declaration_name: a.declaration_name || "",
     applicant: me ? { role: me.role === "director" ? "director" : "staff", marn: me.marn || "", involved_in_enrolments: me.involved_in_enrolments } : null,
     people: people.filter((p) => p.portal_user_id !== user.id).map((p) => ({
       name: p.name, email: p.email, role: p.role, marn: p.marn || "", involved_in_enrolments: p.involved_in_enrolments, location: p.location || "",
     })),
-    referees: referees.map((r) => ({ name: r.name, organisation: r.organisation, email: r.email, phone: r.phone || "" })),
+    referees: referees.map((r) => ({ name: r.name, position: r.position || "", organisation: r.organisation, email: r.email, phone: r.phone || "" })),
     missing: [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)],
   };
 }
@@ -608,6 +654,7 @@ async function exportCsv(actor, q, ctx) {
 }
 
 module.exports = {
+  recordTerms,
   list, getDetail, meta, createFromEoi, sendApplicationLink, update, changeStatus, remove, restore,
   addPerson, updatePerson, removePerson, recordMilestone, sendAgreement,
   linkNewPortalUser, saveApplication, myApplication, submitApplication, markApplicationReceived, acknowledge, syncDecision, approvalMissing, syncUserStatus, exportCsv, slaFor,

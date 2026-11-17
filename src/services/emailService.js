@@ -431,7 +431,39 @@ function sendTaskAssigned({ to, firstName, title, agentName, dueDate, link }) {
   });
 }
 
+// Procedure step 1: ask the agent for updated information or documents
+function sendInfoRequest({ to, firstName, agencyName, message, documents, link }) {
+  return deliver(to, `Your application with Australian Federation College: more information needed`, {
+    preheader: `We need a little more from you, ${agencyName}.`,
+    title: "We need a little more information",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `Thank you for applying on behalf of **${agencyName}**. While reviewing your application we need the following:`,
+      message,
+      ...(documents && documents.length ? [`Documents to update: ${documents.join("; ")}.`] : []),
+      "Please reply to this email or sign in to your portal to add the documents.",
+    ],
+    action: { text: "Open my application", url: link },
+  });
+}
+
+// Procedure step 6: report commission and bonus to AFC Accounts
+function sendTermsReport({ to, firstName, agencyName, country, commission, bonus, by, link }) {
+  return deliver(to, `New agent commission and bonus: ${agencyName}`, {
+    preheader: `${agencyName} (${country})`,
+    title: "Agent commission and bonus",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `**${agencyName}** (${country}) has been appointed as an education agent. ${by} has recorded these terms:`,
+      `**Commission:** ${commission}`,
+      `**Bonus:** ${bonus || "None"}`,
+    ],
+    action: { text: "Open the agent record", url: link },
+  });
+}
+
 module.exports = {
+  sendInfoRequest, sendTermsReport,
   sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin,
   sendAgentApproved, sendAgentRejected,

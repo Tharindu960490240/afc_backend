@@ -16,6 +16,8 @@ const LIST_SELECT = `
   a.account_manager_id, a.last_contact_at, a.application_received_at, a.ack_sent_at, a.ack_due_date, a.decision_due_date,
   a.prisms_recorded_at, a.induction_recorded_at, a.rejection_reason, a.xero_contact_id, a.axcelerate_agent_id,
   a.coi_declared, a.coi_details, a.code_of_ethics_ack_at, a.information_confirmed_at, a.application_submitted_at,
+  a.gst_registered, a.owner_name, a.staff_count, a.years_in_business, a.application_extra, a.privacy_agreed_at,
+  a.declaration_name, a.declaration_at, a.sms_contact_at, a.commission_terms, a.bonus_terms, a.terms_recorded_at,
   a.created_at, a.updated_at, a.deleted_at, a.delete_reason,
   m.first_name AS manager_first_name, m.last_name AS manager_last_name,
   (SELECT COUNT(*)::int FROM agent_persons p
@@ -135,8 +137,9 @@ const setSla = (client, id, { receivedAt, ackDue, decisionDue }) =>
     [id, receivedAt, ackDue, decisionDue],
   );
 const markAcknowledged = (id) => query(`UPDATE agents SET ack_sent_at = now() WHERE id = $1 AND ack_sent_at IS NULL`, [id]);
-const setMilestone = (client, id, column, when, actorId) =>
-  client.query(`UPDATE agents SET ${column === "prisms" ? "prisms_recorded_at" : "induction_recorded_at"} = $2, updated_at = now(), updated_by = $3 WHERE id = $1`, [id, when, actorId]);
+const MILESTONE_COLUMN = { prisms: "prisms_recorded_at", induction: "induction_recorded_at", sms_contact: "sms_contact_at" };
+const setMilestone = (client, id, type, when, actorId) =>
+  client.query(`UPDATE agents SET ${MILESTONE_COLUMN[type]} = $2, ${type === "sms_contact" ? "sms_contact_by = $3," : ""} updated_at = now(), updated_by = $3 WHERE id = $1`, [id, when, actorId]);
 
 // ---------- people ----------
 const PERSON_COLS = `p.id, p.agent_id, p.name, p.email, p.role, p.marn, p.is_director, p.involved_in_enrolments,
@@ -187,14 +190,17 @@ const softDeletePerson = (client, id, reason, actorId) =>
 const setApplication = (client, id, d, actorId) =>
   client.query(
     `UPDATE agents SET coi_declared = $2, coi_details = $3, code_of_ethics_ack_at = now(),
-       information_confirmed_at = now(), application_submitted_at = now(), updated_at = now(), updated_by = $4
+       information_confirmed_at = now(), application_submitted_at = now(), updated_at = now(), updated_by = $4,
+       gst_registered = $5, owner_name = $6, staff_count = $7, years_in_business = $8, application_extra = $9::jsonb,
+       privacy_agreed_at = now(), declaration_name = $10, declaration_at = now()
      WHERE id = $1`,
-    [id, d.coi_declared, d.coi_declared ? d.coi_details : null, actorId || null],
+    [id, d.coi_declared, d.coi_declared ? d.coi_details : null, actorId || null,
+     d.gst_registered, d.owner_name, d.staff_count, d.years_in_business, JSON.stringify(d.extra || {}), d.declaration_name],
   );
 
 const referees = async (agentId, client) =>
   (await q(client).query(
-    `SELECT id, name, organisation, email, phone, created_at FROM agent_referees
+    `SELECT id, name, position, organisation, email, phone, created_at FROM agent_referees
      WHERE agent_id = $1 AND deleted_at IS NULL ORDER BY created_at, id`, [agentId],
   )).rows;
 
@@ -206,9 +212,9 @@ async function replaceReferees(client, agentId, list, actorId) {
   for (const r of list) {
     await client.query(
       // clock_timestamp(): rows added in one transaction keep the order the applicant typed them in
-      `INSERT INTO agent_referees (agent_id, name, organisation, email, phone, created_by, updated_by, created_at)
-       VALUES ($1,$2,$3,lower($4),$5,$6,$6,clock_timestamp())`,
-      [agentId, r.name, r.organisation, r.email, r.phone || null, actorId || null],
+      `INSERT INTO agent_referees (agent_id, name, position, organisation, email, phone, created_by, updated_by, created_at)
+       VALUES ($1,$2,$3,$4,lower($5),$6,$7,$7,clock_timestamp())`,
+      [agentId, r.name, r.position || null, r.organisation, r.email, r.phone || null, actorId || null],
     );
   }
 }
