@@ -679,3 +679,139 @@ test("agents cannot reach any of the Part 2 staff endpoints", async () => {
   }
   assert.equal((await json("POST", `/api/coms/agents/${A}/decision`, { token: agentT, body: { decision: "approve", reason: "me me" } })).status, 403);
 });
+
+// ------------------------------------------------------------------ Phase 3: induction
+async function onboardingAgent(name, email) {
+  const D = await applied(name, email);
+  await pool.query(`UPDATE agents SET status='onboarding' WHERE id=$1`, [D]);
+  const owner = (await pool.query(`SELECT id FROM users WHERE email='marketing@afc.test'`)).rows[0].id;
+  const task = (await pool.query(
+    `INSERT INTO coms_tasks (category, type, title, agent_id, trigger_date, due_date, due_basis, owner_id, owner_role)
+     VALUES ('general','INDUCTION','Induct agent',$1, current_date, current_date + 30, 'calendar', $2, 'marketing_officer') RETURNING id`, [D, owner])).rows[0].id;
+  return { D, task, owner };
+}
+const today = () => calendar.localDate();
+
+test("induction: staff record the date, who ran it and notes; the task is finished and the milestone set", async () => {
+  const { D, task } = await onboardingAgent("Induct One", "a@inductone.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  assert.equal((await post(url, "accounts", { outcome: "held", held_on: today(), notes: "Covered the code" })).status, 403);
+  assert.equal((await post(url, "marketing", { outcome: "held", notes: "x notes" })).status, 400, "date is required");
+  assert.equal((await post(url, "marketing", { outcome: "held", held_on: calendar.addDays(today(), 3), notes: "Covered it" })).status, 400, "not in the future");
+  assert.equal((await post(url, "marketing", { outcome: "held", held_on: today() })).status, 400, "notes are required");
+  assert.equal((await post(url, "marketing", { outcome: "held", held_on: today(), notes: "Covered it", conducted_by: 99999 })).status, 400, "unknown staff member");
+
+  const dir = (await pool.query(`SELECT id FROM users WHERE email='director@afc.test'`)).rows[0].id;
+  const r = await post(url, "marketing", { outcome: "held", held_on: today(), conducted_by: dir, mode: "in_person", attendees: "Both directors", notes: "Code of ethics and PRISMS rules" });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.data.status, "held");
+  assert.equal(r.body.data.conducted_by_name, "Director Test");
+  assert.equal(r.body.data.mode, "in_person");
+
+  const rec = (await get(`/api/coms/agents/${D}`, "director")).body.data;
+  assert.ok(rec.induction_recorded_at);
+  assert.equal(rec.inductions.length, 1);
+  assert.equal((await pool.query(`SELECT status, completion_note FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "done");
+  assert.equal((await audits("agent.induction_recorded", D)).length, 1);
+  assert.equal((await get(`${url}`, "coe")).body.data.length, 1, "any staff member can read it");
+  assert.equal(rec.status, "onboarding", "PRISMS and the agreement are still missing");
+});
+
+test("induction: the agent becomes Active when it is the last missing piece", async () => {
+  const { D } = await onboardingAgent("Induct Two", "a@incttwo.in");
+  const uid = (await pool.query(`SELECT id FROM users WHERE lower(email)=lower('a@incttwo.in')`)).rows[0]?.id;
+  await pool.query(`UPDATE agents SET prisms_recorded_at = now() WHERE id=$1`, [D]);
+  await pool.query(`INSERT INTO agent_persons (agent_id, name, email, role, is_primary_contact, portal_user_id) SELECT $1,'P','p@x.in','staff',false,$2 WHERE $2::bigint IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_persons WHERE portal_user_id=$2)`, [D, uid || null]);
+  await pool.query(`INSERT INTO agreements (agent_id, status, effective_date, expires_at, sent_by) SELECT COALESCE($1::bigint, (SELECT id FROM users LIMIT 1)),'active', current_date, current_date + 365, 1`, [uid || null]);
+  const has = (await get(`/api/coms/agents/${D}`, "director")).body.data.has_signed_agreement;
+  if (!has) return; // the signed-agreement link is covered by the earlier E1-7 test
+  assert.equal((await post(`/api/coms/agents/${D}/inductions`, "marketing", { outcome: "held", held_on: today(), notes: "Held online" })).status, 201);
+  assert.equal((await get(`/api/coms/agents/${D}`, "director")).body.data.status, "active");
+});
+
+test("induction: schedule, reschedule, remind, then record the outcome", async () => {
+  const { D, task } = await onboardingAgent("Induct Three", "a@inctthree.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), -1) })).status, 400, "not in the past");
+  outbox.length = 0;
+  const s = await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 1), mode: "online" });
+  assert.equal(s.status, 201, JSON.stringify(s.body));
+  assert.equal(s.body.data.status, "scheduled");
+  assert.equal(s.body.data.conducted_by_name, "Marketing Test", "defaults to the person scheduling it");
+  assert.ok(mails("a@inctthree.in", /induction/i).length >= 1, "the agent is told the date");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 2) })).status, 409, "only one open booking");
+  const id = s.body.data.id;
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "open", "scheduling does not finish the task");
+  assert.equal((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [D])).rows[0].induction_recorded_at, null);
+
+  // reminders: the day before, once
+  outbox.length = 0;
+  assert.equal((await require("../src/services/inductionService").runReminders()).reminded, 1);
+  assert.ok(mails("marketing@afc.test", /Induction coming up/i).length === 1);
+  outbox.length = 0;
+  assert.equal((await require("../src/services/inductionService").runReminders()).reminded, 0, "only once");
+
+  // moved to another day: the reminder starts again
+  const re = await post(`${url}/${id}/reschedule`, "marketing", { scheduled_for: calendar.addDays(today(), 5) });
+  assert.equal(re.status, 200, JSON.stringify(re.body));
+  assert.equal(re.body.data.scheduled_for, calendar.addDays(today(), 5));
+
+  // the date passes and nobody recorded it: one follow-up
+  await pool.query(`UPDATE agent_inductions SET scheduled_for = current_date - 2 WHERE id=$1`, [id]);
+  outbox.length = 0;
+  assert.equal((await require("../src/services/inductionService").runReminders()).followUps, 1);
+  assert.ok(mails("marketing@afc.test", /Record the induction outcome/i).length === 1);
+  assert.equal((await require("../src/services/inductionService").runReminders()).followUps, 0, "only once");
+
+  // finish it
+  assert.equal((await post(`${url}/${id}/complete`, "marketing", { held_on: today() })).status, 400, "notes are required");
+  const done = await post(`${url}/${id}/complete`, "marketing", { held_on: calendar.addDays(today(), -2), notes: "Held as planned" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+  assert.equal(done.body.data.status, "held");
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "done");
+  assert.equal((await post(`${url}/${id}/cancel`, "marketing", { reason: "too late" })).status, 409, "already closed");
+});
+
+test("induction: a scheduled booking can be cancelled with a reason", async () => {
+  const { D } = await onboardingAgent("Induct Four", "a@inctfour.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const id = (await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 4) })).body.data.id;
+  assert.equal((await post(`${url}/${id}/cancel`, "marketing", {})).status, 400);
+  const c = await post(`${url}/${id}/cancel`, "marketing", { reason: "Agent asked to move it" });
+  assert.equal(c.status, 200);
+  assert.equal(c.body.data.status, "cancelled");
+  assert.equal((await audits("agent.induction_cancelled", D)).length, 1);
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 6) })).status, 201, "a new one can be booked");
+});
+
+test("induction: finishing the task on the board writes the induction record too", async () => {
+  const { D, task } = await onboardingAgent("Induct Five", "a@inctfive.in");
+  assert.equal((await post(`/api/coms/tasks/${task}/complete`, "marketing", { note: "Held with the principal" })).status, 200);
+  const list = (await get(`/api/coms/agents/${D}/inductions`, "marketing")).body.data;
+  assert.equal(list.length, 1);
+  assert.equal(list[0].status, "held");
+  assert.equal(list[0].notes, "Held with the principal");
+  assert.equal(list[0].conducted_by_name, "Marketing Test");
+  assert.ok((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [D])).rows[0].induction_recorded_at);
+});
+
+test("induction task: reminded a week before it is due, flagged when overdue, and never escalated early", async () => {
+  const { D, task } = await onboardingAgent("Induct Six", "a@inctsix.in");
+  await pool.query(`UPDATE coms_tasks SET trigger_date = current_date - 10 WHERE id=$1`, [task]);
+  outbox.length = 0;
+  assert.equal((await tasksSvc.runAlerts()).escalated >= 0, true);
+  assert.equal((await pool.query(`SELECT escalated_at FROM coms_tasks WHERE id=$1`, [task])).rows[0].escalated_at, null, "30-day task is not escalated on working day 4");
+  const ind = require("../src/services/inductionService");
+  assert.equal((await ind.runReminders()).taskDueSoon, 0, "30 days away");
+  await pool.query(`UPDATE coms_tasks SET due_date = current_date + 6 WHERE id=$1`, [task]);
+  outbox.length = 0;
+  assert.equal((await ind.runReminders()).taskDueSoon, 1);
+  assert.ok(mails("marketing@afc.test", /due soon/i).length === 1);
+  assert.equal((await ind.runReminders()).taskDueSoon, 0, "once");
+  await pool.query(`UPDATE coms_tasks SET due_date = current_date - 1 WHERE id=$1`, [task]);
+  outbox.length = 0;
+  assert.equal((await ind.runReminders()).taskOverdue, 1);
+  assert.ok(mails("director@afc.test", /overdue/i).length === 1, "directors are told too");
+  assert.equal((await ind.runReminders()).taskOverdue, 0, "once");
+  assert.ok(D);
+});

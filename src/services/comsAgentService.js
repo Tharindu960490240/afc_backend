@@ -92,7 +92,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   need(actor, "read");
   const a = await repo.findById(id);
   if (!a || (a.deleted_at && (!includeDeleted || !allowed(actor, "restore")))) throw new AppError(404, "Agent not found.");
-  const [persons, referees, history, agreements, signed, activity, tasks, docs] = await Promise.all([
+  const [persons, referees, history, agreements, signed, activity, tasks, docs, inductions] = await Promise.all([
     repo.persons(id),
     repo.referees(id),
     repo.history(id),
@@ -101,6 +101,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     audit.search({ entityType: ENTITY, entityId: id, limit: 30, offset: 0 }),
     require("./taskService").forAgent(id),
     require("./agentDocumentService").checklistState(id),
+    require("./inductionService").list(id),
   ]);
   const base = shape(a);
   return {
@@ -112,6 +113,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     agreements,
     has_signed_agreement: signed,
     tasks,
+    inductions,
     documents: docs.docs,
     documents_required: docs.required,
     documents_complete: docs.complete,
@@ -369,7 +371,8 @@ async function removePerson(actor, id, personId, reason, ctx) {
 
 // ---------- onboarding evidence (BR-02) ----------
 async function recordMilestone(actor, id, { type, date }, ctx) {
-  need(actor, type === "prisms" ? "recordPrisms" : type === "sms_contact" ? "dueDiligence" : "recordInduction");
+  if (type === "induction") throw new AppError(400, "Record the induction from the Onboarding tasks tab, with the date, who ran it and notes.");
+  need(actor, type === "prisms" ? "recordPrisms" : "dueDiligence");
   const a = await repo.findById(id);
   if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
   if (type === "sms_contact") {
@@ -385,7 +388,7 @@ async function recordMilestone(actor, id, { type, date }, ctx) {
     if (type !== "sms_contact") await client.query(
       `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $3, completion_note = 'Recorded on the agent record',
          updated_at = now() WHERE agent_id = $1 AND type = $2 AND status = 'open' AND deleted_at IS NULL`,
-      [id, type === "prisms" ? "PRISMS_ADD" : "INDUCTION", actor.id],
+      [id, "PRISMS_ADD", actor.id],
     );
     await audit.log({ actorId: actor.id, action: `agent.${type}_recorded`, entityType: ENTITY, entityId: id, after: { date: calendar.localDate(when) }, ...ctx }, client);
   });

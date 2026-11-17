@@ -34,6 +34,19 @@ const remove = asyncHandler(async (req, res) => {
 const restore = asyncHandler(async (req, res) => ok(res, await svc.restore(req.user, req.params.id, clientInfo(req))));
 const milestone = asyncHandler(async (req, res) => ok(res, await svc.recordMilestone(req.user, req.params.id, req.body, clientInfo(req))));
 
+const induction = () => require("../services/inductionService");
+const inductions = asyncHandler(async (req, res) => {
+  await svc.getDetail(req.user, req.params.id); // read permission and 404
+  ok(res, await induction().list(req.params.id));
+});
+const recordInduction = asyncHandler(async (req, res) => {
+  const r = await induction().record(req.user, req.params.id, req.body, clientInfo(req));
+  res.status(201).json({ success: true, data: r });
+});
+const completeInduction = asyncHandler(async (req, res) => ok(res, await induction().complete(req.user, req.params.id, req.params.inductionId, req.body, clientInfo(req))));
+const rescheduleInduction = asyncHandler(async (req, res) => ok(res, await induction().reschedule(req.user, req.params.id, req.params.inductionId, req.body, clientInfo(req))));
+const cancelInduction = asyncHandler(async (req, res) => ok(res, await induction().cancel(req.user, req.params.id, req.params.inductionId, req.body.reason, clientInfo(req))));
+
 const addPerson = asyncHandler(async (req, res) => {
   const r = await svc.addPerson(req.user, req.params.id, req.body, clientInfo(req));
   res.status(201).json({ success: true, data: r.persons });
@@ -48,4 +61,4 @@ const exportCsv = asyncHandler(async (req, res) => {
   sendCsv(res, "agent-register", csv);
 });
 
-module.exports = { list, meta, detail, create, sendLink, update, status, remove, restore, milestone, addPerson, updatePerson, removePerson, exportCsv };
+module.exports = { list, meta, detail, create, sendLink, update, status, remove, restore, milestone, inductions, recordInduction, completeInduction, rescheduleInduction, cancelInduction, addPerson, updatePerson, removePerson, exportCsv };

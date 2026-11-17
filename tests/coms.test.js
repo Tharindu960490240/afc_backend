@@ -319,8 +319,9 @@ test("BR-01 and BR-02: no Active status without a signed agreement, PRISMS entry
   // PRISMS is recorded by the CoE administrator, induction by marketing
   assert.equal((await post(`/api/coms/agents/${agentId}/milestones`, "marketing", { type: "prisms" })).status, 403);
   assert.equal((await post(`/api/coms/agents/${agentId}/milestones`, "coe", { type: "prisms" })).status, 200);
-  assert.equal((await post(`/api/coms/agents/${agentId}/milestones`, "coe", { type: "induction" })).status, 403);
-  assert.equal((await post(`/api/coms/agents/${agentId}/milestones`, "marketing", { type: "induction", date: "2026-11-02" })).status, 200);
+  assert.equal((await post(`/api/coms/agents/${agentId}/inductions`, "coe", { outcome: "held", held_on: "2026-11-02", notes: "Session held" })).status, 403);
+  assert.equal((await post(`/api/coms/agents/${agentId}/milestones`, "marketing", { type: "induction", date: "2026-11-02" })).status, 400, "induction has its own form now");
+  assert.equal((await post(`/api/coms/agents/${agentId}/inductions`, "marketing", { outcome: "held", held_on: "2026-11-02", notes: "Session held" })).status, 201);
   assert.equal((await st("active", "marketing")).body.blockers.length, 1, "agreement still missing");
 
   // a countersigned agreement with both dates

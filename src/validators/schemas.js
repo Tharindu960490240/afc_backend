@@ -289,6 +289,20 @@ const createPerson = z.object(personBody).partial({ role: true, marn: true, invo
 const updatePerson = z.object({ ...personBody, training_completed_at: nullable(z.coerce.date()), active: z.boolean() })
   .partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to update");
 const milestone = z.object({ type: z.enum(["prisms", "induction", "sms_contact"]), date: dateOnly.optional() }).strict();
+const inductionBody = z.object({
+  outcome: z.enum(["held", "scheduled"]),
+  held_on: optional(dateOnly),
+  scheduled_for: optional(dateOnly),
+  conducted_by: optional(z.coerce.number().int().positive()),
+  mode: optional(z.enum(["online", "in_person", "phone"])),
+  attendees: optional(z.string().trim().max(500)),
+  notes: optional(z.string().trim().max(3000)),
+}).strict();
+const inductionComplete = inductionBody.omit({ outcome: true, scheduled_for: true });
+const inductionReschedule = z.object({
+  scheduled_for: dateOnly, conducted_by: optional(z.coerce.number().int().positive()), mode: optional(z.enum(["online", "in_person", "phone"])),
+}).strict();
+const inductionParams = z.object({ id: z.string().uuid(), inductionId: z.string().uuid() });
 const csvBool = z.enum(["true", "false"]).transform((v) => v === "true");
 const comsAgentsQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -427,7 +441,7 @@ module.exports = {
   agentTermsSend,
   agentDocument, documentParams, documentReview, infoRequest, agentTerms,
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
-  comsAgentsQuery, uuidParam, personParams, holidayBody, auditQuery,
+  comsAgentsQuery, uuidParam, personParams, inductionBody, inductionComplete, inductionReschedule, inductionParams, holidayBody, auditQuery,
   upload, createReferee, updateReferee, refereeParams, checkParams, phoneCheck, referenceOutcome, referenceAnswers,
   dueDiligenceCheck, declarations, decision, sendAgentAgreement, taskCreate, taskComplete, taskAssign, tasksQuery, publicToken, fileParams, cancelTask,
   login, forgotPassword, resetPassword, changePassword, updateProfile,

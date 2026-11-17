@@ -196,3 +196,10 @@ Run `npm run migrate` (adds 011, 012, 013).
 - **Authorised staff**: `PATCH /users/:id/authorised` (CEO or administrator); toggle on the Users screen.
 - **Termination**: login is blocked at once, sessions end, and PRISMS_REMOVE (compliance), ASQANET_END (CEO) and WEBSITE_REMOVE (admin) tasks are created. A terminated agent's access cannot be switched back on. Records are only ever soft-deleted.
 - **Removed screens**: Registrations, the old Agents list and detail page, and the "Soon" Leads and Renewals menu items.
+
+## Phase 3 update: agent induction
+- Migration `014_induction.sql` adds `agent_inductions` (date, who ran it, how, attendees, notes, scheduled/held/cancelled) and backfills inductions already recorded.
+- Endpoints (staff): `GET/POST /api/coms/agents/:id/inductions`, `POST .../:inductionId/complete|reschedule|cancel`. Recording needs admin, marketing officer or director.
+- A held induction sets the BR-02 milestone, finishes the INDUCTION task and activates the agent when the agreement and PRISMS are also recorded. Finishing the INDUCTION task on the task board writes the same record.
+- The old `milestones` endpoint no longer accepts `induction`.
+- Daily job: reminder to the person running a booked induction the day before, a follow-up if the outcome is not recorded, and reminders on the INDUCTION task (7 days before it is due, and once when overdue, also to directors). The 5-working-day escalation now applies to registration tasks only, not the 30-day induction task.

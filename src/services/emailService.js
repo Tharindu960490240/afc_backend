@@ -475,6 +475,33 @@ function sendTaskAssigned({ to, firstName, title, agentName, dueDate, link }) {
   });
 }
 
+// Phase 3: induction
+function sendInductionScheduled({ to, firstName, date, mode, conductor }) {
+  return deliver(to, "Your induction with Australian Federation College", {
+    preheader: `Your induction is on ${date}.`,
+    title: "Your induction is booked",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `Your induction with Australian Federation College is booked for **${date}** (${mode}). It will be run by **${conductor}**.`,
+      "It covers how we work with agents, our compliance expectations and how to submit student applications. Please reply to this email if the date does not suit you.",
+    ],
+  });
+}
+function sendInductionReminder({ to, firstName, agentName, date, mode, level, link }) {
+  const heading = level === "record_outcome" ? "Record the induction outcome" : level === "scheduled" ? "Induction scheduled" : "Induction coming up";
+  return deliver(to, `${heading}: ${agentName}`, {
+    preheader: `${agentName} on ${date}`,
+    title: heading,
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      level === "record_outcome"
+        ? `The induction for **${agentName}** was scheduled for **${date}**. Please record that it was held (date, who ran it and notes) or change the date. The agent cannot become Active until it is recorded.`
+        : `You are running the induction for **${agentName}** on **${date}** (${mode}).`,
+    ],
+    action: { text: "Open the agent record", url: link },
+  });
+}
+
 // Procedure step 1: ask the agent for updated information or documents
 function sendInfoRequest({ to, firstName, agencyName, message, documents, link }) {
   return deliver(to, `Your application with Australian Federation College: more information needed`, {
@@ -508,7 +535,7 @@ function sendTermsReport({ to, firstName, agencyName, country, commission, bonus
 
 module.exports = {
   sendInfoRequest, sendTermsReport,
-  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned,
+  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin, sendNewApplicationToStaff,
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,

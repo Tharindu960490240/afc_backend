@@ -5,7 +5,7 @@ const q = (client) => client || { query };
 const COLS = `t.id, t.category, t.type, t.title, t.description, t.agent_id, t.agreement_id, t.trigger_event, t.trigger_date,
   to_char(t.due_date, 'YYYY-MM-DD') AS due_date, t.due_basis, to_char(t.legal_deadline, 'YYYY-MM-DD') AS legal_deadline,
   t.owner_id, t.owner_role, t.status, t.completed_at, t.completed_by, t.completion_note, t.evidence_file_id,
-  t.warned_at, t.escalated_at, t.created_at,
+  t.warned_at, t.escalated_at, t.reminded_at, t.created_at,
   a.legal_name AS agent_name,
   trim(coalesce(o.first_name,'') || ' ' || coalesce(o.last_name,'')) AS owner_name,
   trim(coalesce(c.first_name,'') || ' ' || coalesce(c.last_name,'')) AS completed_by_name,
@@ -87,7 +87,10 @@ const userById = async (id) => (await query(`SELECT id, first_name, last_name, e
 const openRegulatory = async () =>
   (await query(`SELECT ${COLS}, to_char(t.trigger_date, 'YYYY-MM-DD') AS trigger_day ${FROM}
                 WHERE t.status = 'open' AND t.deleted_at IS NULL`)).rows;
+const openOfType = async (type) =>
+  (await query(`SELECT ${COLS} ${FROM} WHERE t.status = 'open' AND t.deleted_at IS NULL AND t.type = $1`, [type])).rows;
+const markReminded = (id) => query(`UPDATE coms_tasks SET reminded_at = now() WHERE id = $1`, [id]);
 const markWarned = (id) => query(`UPDATE coms_tasks SET warned_at = now() WHERE id = $1`, [id]);
 const markEscalated = (id) => query(`UPDATE coms_tasks SET escalated_at = now() WHERE id = $1`, [id]);
 
-module.exports = { list, listAll, forAgent, findById, insert, complete, cancel, assign, setDue, ownerFor, usersWithRoles, userById, openRegulatory, markWarned, markEscalated };
+module.exports = { list, listAll, forAgent, findById, insert, complete, cancel, assign, setDue, ownerFor, usersWithRoles, userById, openRegulatory, openOfType, markReminded, markWarned, markEscalated };

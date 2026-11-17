@@ -3,6 +3,7 @@
 //   - referee reminders: every 3 working days, up to 2 reminders, for forms nobody has answered
 //   - decision timer: email the decision makers at day 7 (amber) and day 10 (red) of 10 working days (BR-08)
 //   - task alerts and escalation (E5-1, BR-09)
+//   - induction reminders: the day before, outcome not recorded, and the induction task due soon / overdue (Phase 3)
 //   - safety net: an approved agent with a countersigned agreement is moved to Onboarding if that step was missed
 // Runs from node-cron on a normal server, or from GET /api/jobs/daily (Vercel Cron) on serverless hosting.
 // ===============================================================
@@ -68,6 +69,7 @@ async function run() {
     referenceReminders: await referenceReminders(),
     decisionTimers: await decisionTimers(),
     tasks: await tasks.runAlerts(),
+    induction: await require("../services/inductionService").runReminders(),
     onboardingStarted: await reconcileOnboarding(),
   };
   console.log("COMS daily jobs:", JSON.stringify(result));

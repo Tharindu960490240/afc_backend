@@ -28,6 +28,13 @@ router.post("/agents/:id/persons", validate(s.uuidParam, "params"), validate(s.c
 router.patch("/agents/:id/persons/:personId", validate(s.personParams, "params"), validate(s.updatePerson), agents.updatePerson);
 router.post("/agents/:id/persons/:personId/delete", validate(s.personParams, "params"), validate(s.agentDelete), agents.removePerson);
 
+// ---- Phase 3: induction ----
+router.get("/agents/:id/inductions", validate(s.uuidParam, "params"), agents.inductions);
+router.post("/agents/:id/inductions", validate(s.uuidParam, "params"), validate(s.inductionBody), agents.recordInduction);
+router.post("/agents/:id/inductions/:inductionId/complete", validate(s.inductionParams, "params"), validate(s.inductionComplete), agents.completeInduction);
+router.post("/agents/:id/inductions/:inductionId/reschedule", validate(s.inductionParams, "params"), validate(s.inductionReschedule), agents.rescheduleInduction);
+router.post("/agents/:id/inductions/:inductionId/cancel", validate(s.inductionParams, "params"), validate(s.agentDelete), agents.cancelInduction);
+
 // ---- Part 2: due diligence, referees, decision, agreement ----
 const idp = validate(s.uuidParam, "params");
 router.get("/agents/:id/due-diligence", idp, d.get);

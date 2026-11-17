@@ -224,7 +224,7 @@ async function complete(actor, id, { note, file }, ctx) {
       }
       await repo.complete(client, id, { note, fileId }, actor.id);
       if (t.agent_id && t.type === "PRISMS_ADD") await agentRepo.setMilestone(client, t.agent_id, "prisms", new Date(), actor.id);
-      if (t.agent_id && t.type === "INDUCTION") await agentRepo.setMilestone(client, t.agent_id, "induction", new Date(), actor.id);
+      if (t.agent_id && t.type === "INDUCTION") await require("./inductionService").recordFromTask(client, { agentId: t.agent_id, actor, note });
       await audit.log({
         actorId: actor.id, action: "task.completed", entityType: "task", entityId: id,
         before: { status: "open" }, after: { status: "done" },
@@ -297,6 +297,8 @@ async function runAlerts() {
   const tell = (users, t, level) => users.forEach((u) => email.sendTaskAlert({ to: u.email, firstName: u.first_name, title: t.title, agentName: t.agent_name, dueDate: t.due_date, level, link }));
 
   for (const t of await repo.openRegulatory()) {
+    // the induction task has its own reminders (inductionService); the 5-working-day escalation is for registration tasks only
+    if (t.type === "INDUCTION" || t.due_basis !== "business") continue;
     const owner = t.owner_id ? await repo.userById(t.owner_id) : null;
     const ownerList = owner?.status === "active" ? [owner] : [];
     // registration tasks: escalate to a manager on working day 4 (the deadline is working day 5)
