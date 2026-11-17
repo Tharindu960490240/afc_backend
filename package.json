@@ -10,6 +10,7 @@
     "migrate": "node scripts/migrate.js",
     "seed:admin": "node scripts/seed-admin.js",
     "seed:demo": "node scripts/seed-demo.js",
+    "reset:data": "node scripts/reset-data.js",
     "test": "node --test --test-concurrency=1 tests/*.test.js"
   },
   "engines": {

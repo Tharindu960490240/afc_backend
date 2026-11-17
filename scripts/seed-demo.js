@@ -1,11 +1,24 @@
-// Adds sample agents, referees and tasks so every Part 2 screen has something to show.
-// Safe to run again (skips agents that already exist). Demo emails end in @demo.example, so nothing is ever emailed.
+// Adds sample data covering every screen built so far: demo staff logins for each role, agents at every stage with
+// their application answers, documents, referees, due diligence, agreements, a certificate, tasks, status history and audit entries.
+// Safe to run again (skips what already exists). Demo emails end in @demo.example, so nothing is ever emailed.
 // Usage: npm run seed:demo      Remove again: npm run seed:demo -- --remove
+// Every demo login uses the password in DEMO_PASSWORD (default Passw0rd@1).
 require("dotenv").config();
+const crypto = require("crypto");
 const { pool } = require("../src/config/db");
+const { hashPassword } = require("../src/utils/password");
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "Passw0rd@1";
 
-const day = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
-const ts = (n) => new Date(Date.now() + n * 86400000).toISOString();
+const STAFF = [
+  ["ceo", "Cathy", "Chief", "ceo@demo.example"], ["director", "Sohel", "Director", "director@demo.example"],
+  ["marketing_officer", "Maya", "Marketing", "marketing@demo.example"], ["admissions", "Adam", "Admissions", "admissions@demo.example"],
+  ["coe_admin", "Cleo", "CoE", "coe@demo.example"], ["accounts", "Alan", "Accounts", "accounts@demo.example"],
+  ["compliance", "Cora", "Compliance", "compliance@demo.example"],
+];
+
+const day = (n) => (n == null ? null : new Date(Date.now() + n * 86400000).toISOString().slice(0, 10));
+const ts = (n) => (n == null ? null : new Date(Date.now() + n * 86400000).toISOString());
+const plus = (n, k) => (n == null ? null : n + k);
 
 const GOOD = { known_for: "About six years as a sub-agent for our group.", worked_with: true, honest: true, accurate_info: true, complaints: false, recommend: true, comments: "Reliable and well organised." };
 const BAD = { known_for: "Met at a conference.", worked_with: true, honest: false, accurate_info: false, complaints: true, complaints_detail: "Two students were given wrong visa advice.", recommend: false };
@@ -21,18 +34,19 @@ const EXTRA = (a) => ({
 });
 
 const AGENTS = [
-  { name: "Demo - Mekong Education Services", country: "Vietnam", email: "mekong@demo.example", status: "applied", received: -2 },
+  { name: "Demo - Aurora Overseas", country: "Brazil", email: "aurora@demo.example", status: "prospect", received: null, invite: true },
+  { name: "Demo - Mekong Education Services", country: "Vietnam", email: "mekong@demo.example", status: "applied", received: -2, login: true },
   { name: "Demo - Himalaya Study Bridge", country: "Nepal", email: "himalaya@demo.example", status: "due_diligence", received: -3,
     referees: [["Prof Sunita Rai", "Kathmandu University", "sunita@demo.example", "positive"], ["Mr Arjun Thapa", "Everest College", "arjun@demo.example", "pending"]] },
   { name: "Demo - Cedar Global Pathways", country: "Lebanon", email: "cedar@demo.example", status: "due_diligence", received: -17, // past day 10: shows red
     referees: [["Ms Lina Haddad", "Beirut Academy", "lina@demo.example", "negative"]] },
   { name: "Demo - Southern Cross Agents", country: "Australia", email: "southerncross@demo.example", status: "due_diligence", received: -11, // day 7+: shows amber
     referees: [["Dr Paul Nguyen", "Melbourne Skills", "paul@demo.example", "positive"], ["Ms Kim Ellis", "Hobart Training", "kim@demo.example", "positive"]], checks: true },
-  { name: "Demo - Lotus Education Group", country: "India", email: "lotus@demo.example", status: "approved", received: -14, decided: -4,
+  { name: "Demo - Lotus Education Group", country: "India", email: "lotus@demo.example", status: "approved", received: -14, decided: -4, login: true, agreement: "sent",
     referees: [["Dr Meera Shah", "Pune Institute", "meera@demo.example", "positive"]], checks: true },
-  { name: "Demo - Pacific Rim Students", country: "Philippines", email: "pacificrim@demo.example", status: "onboarding", received: -30, decided: -20, prisms: true,
+  { name: "Demo - Pacific Rim Students", country: "Philippines", email: "pacificrim@demo.example", status: "onboarding", received: -30, decided: -20, prisms: true, login: true, agreement: "active", effective: -17,
     referees: [["Mr Ben Cruz", "Manila College", "ben@demo.example", "positive"]], checks: true, tasks: "onboarding" },
-  { name: "Demo - Golden Gate Overseas", country: "China", email: "goldengate@demo.example", status: "active", received: -90, decided: -80, prisms: true, induction: true,
+  { name: "Demo - Golden Gate Overseas", country: "China", email: "goldengate@demo.example", status: "active", received: -90, decided: -80, prisms: true, induction: true, login: true, agreement: "active", effective: -75,
     referees: [["Ms Wei Zhang", "Shanghai Partners", "wei@demo.example", "positive"]], checks: true, tasks: "done" },
   { name: "Demo - Quick Visa Co", country: "Nigeria", email: "quickvisa@demo.example", status: "rejected", received: -40, decided: -30, reason: "Two referees reported misleading advice to students.",
     referees: [["Mr Tunde Bello", "Lagos School", "tunde@demo.example", "negative"]], checks: true },
@@ -40,13 +54,23 @@ const AGENTS = [
 
 async function remove() {
   const r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
-  console.log(`Removed ${r.rowCount} demo agents (their referees, checks and tasks go with them).`);
+  const u = await pool.query("DELETE FROM users WHERE email LIKE '%@demo.example'");
+  await pool.query("DELETE FROM invitations WHERE email LIKE '%@demo.example'");
+  console.log(`Removed ${r.rowCount} demo agents and ${u.rowCount} demo logins (their referees, checks, agreements and tasks go with them).`);
 }
 
 async function main() {
   if (process.argv.includes("--remove")) return remove();
+  const hash = await hashPassword(DEMO_PASSWORD);
+  for (const [role, first, last, email] of STAFF) {
+    await pool.query(
+      `INSERT INTO users (email, password_hash, first_name, last_name, role, status, consent_at) SELECT $1::varchar,$2,$3,$4,$5,'active',now() WHERE NOT EXISTS (SELECT 1 FROM users WHERE lower(email) = lower($1::varchar))`,
+      [email, hash, first, last, role]);
+  }
   const staff = async (role) => (await pool.query("SELECT id FROM users WHERE role=$1 AND is_active IS NOT FALSE ORDER BY id LIMIT 1", [role]).catch(() => pool.query("SELECT id FROM users WHERE role=$1 ORDER BY id LIMIT 1", [role]))).rows[0]?.id || null;
   const marketing = await staff("marketing_officer"), director = await staff("director"), compliance = await staff("compliance"), coe = await staff("coe_admin");
+  const template = (await pool.query("SELECT id, body FROM agreement_templates WHERE is_active ORDER BY id DESC LIMIT 1")).rows[0];
+  const logins = [];
   let added = 0;
   for (const a of AGENTS) {
     if ((await pool.query("SELECT 1 FROM agents WHERE lower(email)=$1", [a.email])).rowCount) continue;
@@ -58,16 +82,16 @@ async function main() {
          prisms_recorded_at, induction_recorded_at, rejection_reason, created_by)
        VALUES ($1,$2,$3,$4,'website',$5,$5,'+61 3 9000 0000',$6,$7,true,$8,$9,$9,$10,false,$9,$9,$11,$12,$13,$8) RETURNING id`,
       [a.name, a.country, a.email, a.status, "1 Sample Street, " + a.country, "5" + String(10000000 + a.name.length * 104729).slice(0, 10), marn, marketing,
-       ts(a.received), day(a.received + 14), a.prisms ? ts(a.decided + 5) : null, a.induction ? ts(a.decided + 10) : null, a.reason || null]);
+       ts(a.received), day(plus(a.received, 14)), a.prisms ? ts(a.decided + 5) : null, a.induction ? ts(a.decided + 10) : null, a.reason || null]);
     const id = ag.id;
     await pool.query(
       `UPDATE agents SET gst_registered = $2, owner_name = $3, staff_count = $4, years_in_business = $5, application_extra = $6::jsonb,
          privacy_agreed_at = application_submitted_at, declaration_name = $3, declaration_at = application_submitted_at,
          sms_contact_at = CASE WHEN $7 THEN application_received_at + interval '1 day' END,
          commission_terms = $8, bonus_terms = $9, terms_recorded_at = CASE WHEN $8::text IS NOT NULL THEN now() END WHERE id = $1`,
-      [id, a.country === "Australia", "Owner of " + a.name.replace("Demo - ", ""), 8, 6, JSON.stringify(EXTRA(a)), a.status !== "applied",
+      [id, a.country === "Australia", "Owner of " + a.name.replace("Demo - ", ""), 8, 6, JSON.stringify(EXTRA(a)), !['applied', 'prospect'].includes(a.status),
        a.status === "active" ? "10% of tuition for each enrolled student" : null, a.status === "active" ? "$500 after 10 enrolments in a year" : null]);
-    if (a.status !== "applied") {
+    if (!['applied', 'prospect'].includes(a.status)) {
       for (const kind of ["business_registration", "agency_profile"]) {
         const f = (await pool.query(
           `INSERT INTO coms_files (kind, original_name, storage_key, mime_type, size_bytes, sha256) VALUES ('agent_document',$1,$2,'application/pdf',10,$3) RETURNING id`,
@@ -116,6 +140,68 @@ async function main() {
            done ? "done" : "open", done ? ts(a.decided + 6) : null, done ? owner : null, done ? "Completed (sample data)." : null]);
       }
     }
+    // a prospect has only shown interest: no application answers yet
+    if (a.status === "prospect") {
+      await pool.query(`UPDATE agents SET coi_declared = NULL, code_of_ethics_ack_at = NULL, information_confirmed_at = NULL, application_extra = '{}'::jsonb,
+        gst_registered = NULL, owner_name = NULL, staff_count = NULL, years_in_business = NULL, abn_acn = NULL, source = 'eoi' WHERE id = $1`, [id]);
+    }
+
+    // status history, so the Overview timeline is filled in
+    const path = { prospect: ["prospect"], applied: ["prospect", "applied"], due_diligence: ["prospect", "applied", "due_diligence"],
+      approved: ["prospect", "applied", "due_diligence", "approved"], onboarding: ["prospect", "applied", "due_diligence", "approved", "onboarding"],
+      active: ["prospect", "applied", "due_diligence", "approved", "onboarding", "active"], rejected: ["prospect", "applied", "due_diligence", "rejected"] }[a.status];
+    const base = a.received == null ? -3 : a.received;
+    for (let i = 0; i < path.length; i++) {
+      await pool.query("INSERT INTO agent_status_history (agent_id, from_status, to_status, reason, changed_by, changed_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [id, i ? path[i - 1] : null, path[i], i === 0 ? "Registered" : null, marketing, ts(i === 0 ? base - 1 : base + (a.decided != null ? Math.round((a.decided - base) * i / path.length) : i))]);
+    }
+    const note = (action, when, who, meta = {}) => pool.query("INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, metadata, created_at) VALUES ($1,$2,'agent',$3,$4,$5)", [who, action, id, meta, when]);
+    if (a.status !== "prospect") await note("agent.application_submitted", ts(a.received), null, { source: "website" });
+    if (a.decided != null) await note(a.status === "rejected" ? "agent.rejected" : "agent.approved", ts(a.decided), director);
+
+    // portal login for the agent's main contact
+    let portalId = null;
+    if (a.login) {
+      const email = "director." + a.email;
+      portalId = (await pool.query(
+        `INSERT INTO users (email, password_hash, first_name, last_name, role, status, consent_at) VALUES ($1,$2,'Demo',$3,'agent','active',now()) RETURNING id`,
+        [email, await hashPassword(DEMO_PASSWORD), a.name.replace("Demo - ", "").split(" ")[0]])).rows[0].id;
+      await pool.query(`INSERT INTO agent_profiles (user_id, agency_name, business_number, country, registered_via, email_verified_at, decided_by, decided_at) VALUES ($1,$2,$3,$4,'website',now(),$5,now())`,
+        [portalId, a.name.replace("Demo - ", ""), String(10000000000 + a.name.length * 104729), a.country, director]);
+      await pool.query("UPDATE agent_persons SET portal_user_id = $2 WHERE agent_id = $1 AND is_primary_contact", [id, portalId]);
+      logins.push(`${email}  (${a.name.replace("Demo - ", "")}, ${a.status})`);
+    }
+
+    // agreements: sent to the agent, or signed and countersigned
+    if (a.agreement && portalId && template) {
+      const text = template.body.replace(/{{\s*agency_name\s*}}/g, a.name.replace("Demo - ", "")).replace(/{{\s*[a-z_]+\s*}}/g, "");
+      const sha = crypto.createHash("sha256").update(text).digest("hex");
+      const sentDay = a.decided + 1;
+      const ag2 = (await pool.query(
+        `INSERT INTO agreements (agent_id, title, status, validity_months, sent_by, sent_at, template_id, body_snapshot, body_sha256) VALUES ($1,'Education Agent Agreement',$2,12,$3,$4,$5,$6,$7) RETURNING id`,
+        [portalId, a.agreement === "sent" ? "sent" : "active", marketing, ts(sentDay), template.id, text, sha])).rows[0].id;
+      await pool.query("INSERT INTO agreement_events (agreement_id, actor_id, type, note, created_at) VALUES ($1,$2,'sent','Sample agreement',$3)", [ag2, marketing, ts(sentDay)]);
+      await pool.query("INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, created_at) VALUES ($1,'agreement.sent','agreement',$2,$3)", [marketing, String(ag2), ts(sentDay)]);
+      if (a.agreement === "active") {
+        await pool.query(
+          `UPDATE agreements SET submitted_at=$2, agent_sig_name=$3, agent_signed_at=$2, agent_signed_ip='127.0.0.1',
+             reviewed_by=$4, reviewed_at=$5, admin_sig_name='Sohel RANA', admin_sig_position='Strategy & Growth Director', admin_signed_at=$5, admin_signed_ip='127.0.0.1',
+             effective_date=$6, expires_at=($6::date + interval '12 months')::date WHERE id=$1`,
+          [ag2, ts(sentDay + 1), "Owner of " + a.name.replace("Demo - ", ""), director, ts(a.effective - 1), day(a.effective)]);
+        await pool.query("INSERT INTO agreement_events (agreement_id, actor_id, type, note, created_at) VALUES ($1,$2,'submitted',NULL,$3),($1,$4,'approved','Countersigned',$5)", [ag2, portalId, ts(sentDay + 1), director, ts(a.effective - 1)]);
+        await pool.query("INSERT INTO audit_logs (actor_id, action, entity_type, entity_id, created_at) VALUES ($1,'agreement.approved','agreement',$2,$3)", [director, String(ag2), ts(a.effective - 1)]);
+      }
+    }
+    if (a.status === "active") {
+      await pool.query("UPDATE agents SET certificate_sent_at = $2 WHERE id = $1", [id, ts(a.induction ? a.decided + 10 : -5)]);
+      await note("agent.activated", ts(a.decided + 10), marketing);
+      await note("agent.terms_recorded", ts(a.decided + 8), marketing);
+      await note("agent.certificate_sent", ts(a.decided + 10), marketing);
+    }
+    if (a.invite) {
+      await pool.query("INSERT INTO invitations (email, role, first_name, token_hash, invited_by, expires_at, agent_id) VALUES ($1,'agent','Aurora',$2,$3,$4,$5)",
+        [a.email, crypto.randomBytes(32).toString("hex"), marketing, ts(10), id]);
+    }
     added++;
   }
   // a couple of general tasks, one overdue
@@ -128,5 +214,8 @@ async function main() {
       [first.id, day(-10), day(-3), marketing, day(12)]);
   }
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
+  console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
+  for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);
+  for (const l of logins) console.log(`  ${l}`);
 }
 main().catch((e) => { console.error(e.message); process.exitCode = 1; }).finally(() => pool.end());

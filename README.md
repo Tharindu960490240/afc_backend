@@ -168,3 +168,8 @@ Run `npm run migrate` (migration 009). The certificate follows the college's des
 - Staff: **Agreements** tab on the agent record (when Active) has **Download (PDF)** and **Email it to the agent** (`GET /api/coms/agents/:id/certificate`, `POST /api/coms/agents/:id/certificate/send`).
 - Agent: **My agreement** page shows a **Download certificate** button once Active (`GET /api/agent-application/certificate`, `.../certificate/download`).
 - Signatory shown on the certificate: set `CERT_SIGNER_NAME` and `CERT_SIGNER_POSITION` (defaults: Sohel RANA, Strategy & Growth Director). The signature image is `src/emails/assets/signature-sohel-rana.png`. Replace it if the signatory changes.
+
+## Clean start and demo data
+
+- `npm run reset:data` removes everything except administrator logins, the public-holiday calendar and the agreement template. It shows the database name and asks you to type it before deleting. It removes all other users, agents, agreements, tasks, invitations and the audit log (files in `uploads/` are not touched). There is no undo: take a database backup first.
+- `npm run seed:demo` then adds sample data for every screen built so far: 7 staff logins (one per role), 9 agents at every stage (prospect to active, rejected), application answers, documents, referees, due diligence, agreements (one sent, two countersigned), a certificate, tasks, history and audit entries. All demo logins use `Passw0rd@1` (change with `DEMO_PASSWORD`). Remove again with `npm run seed:demo -- --remove`.
