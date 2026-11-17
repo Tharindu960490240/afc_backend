@@ -66,13 +66,13 @@ const REFERENCE_QUESTIONS = Object.freeze([
 
 // Regulatory and onboarding tasks (E5). due_basis: business = working days, calendar = calendar days.
 const TASK_TYPES = Object.freeze({
-  PRISMS_ADD: { category: "regulatory", label: "Add agent to PRISMS", ownerRole: ROLES.COE_ADMIN },
-  PRISMS_UPDATE: { category: "regulatory", label: "Update agent in PRISMS", ownerRole: ROLES.COE_ADMIN },
-  PRISMS_REMOVE: { category: "regulatory", label: "Remove agent from PRISMS", ownerRole: ROLES.COE_ADMIN },
-  ASQANET_START: { category: "regulatory", label: "ASQAnet notice: agreement start", ownerRole: ROLES.COE_ADMIN },
-  ASQANET_END: { category: "regulatory", label: "ASQAnet notice: agreement end", ownerRole: ROLES.COMPLIANCE },
+  PRISMS_ADD: { category: "regulatory", label: "Add agent to PRISMS", ownerRole: ROLES.COMPLIANCE },
+  PRISMS_UPDATE: { category: "regulatory", label: "Update agent in PRISMS", ownerRole: ROLES.COMPLIANCE },
+  PRISMS_REMOVE: { category: "regulatory", label: "Remove agent from PRISMS", ownerRole: ROLES.COMPLIANCE },
+  ASQANET_START: { category: "regulatory", label: "ASQAnet notice: agreement start", ownerRole: ROLES.CEO },
+  ASQANET_END: { category: "regulatory", label: "ASQAnet notice: agreement end", ownerRole: ROLES.CEO },
   WEBSITE_ADD: { category: "regulatory", label: "Add agent to the website list", ownerRole: ROLES.ADMIN },
-  WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.MARKETING },
+  WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.ADMIN },
   S21B_REQUEST: { category: "regulatory", label: "Section 21B request", ownerRole: ROLES.COMPLIANCE },
   INDUCTION: { category: "general", label: "Agent induction and staff training", ownerRole: ROLES.MARKETING },
   COMMISSION_REPORT: { category: "general", label: "Report commission and bonus to Accounts", ownerRole: ROLES.MARKETING },

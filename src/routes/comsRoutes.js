@@ -54,6 +54,8 @@ router.get("/agents/:id/documents/:docId/download", limits.sensitive, validate(s
 router.post("/agents/:id/request-information", limits.sensitive, idp, validate(s.infoRequest), docsCtrl.requestInfo);
 router.get("/agents/:id/application.pdf", limits.sensitive, idp, docsCtrl.applicationPdf);
 router.post("/agents/:id/terms", idp, validate(s.agentTerms), docsCtrl.terms);
+router.get("/agents/:id/terms/draft", idp, docsCtrl.termsDraft);
+router.post("/agents/:id/terms/send", idp, validate(s.agentTermsSend), docsCtrl.termsSend);
 router.get("/files/:fileId/download", limits.sensitive, validate(s.fileParams, "params"), d.download);
 
 // ---- Part 2: task engine and regulatory task board ----

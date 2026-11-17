@@ -1,4 +1,4 @@
-// Certificate of appointment for an agent: look it up, download it, and email it when onboarding is finished.
+// Certificate of appointment for an agent: look it up, download it, and email it when the agreement is countersigned.
 const { Readable } = require("stream");
 const { query } = require("../config/db");
 const agentRepo = require("../repositories/comsAgentRepo");
@@ -29,7 +29,7 @@ const fileName = (a) => `${a.legal_name} - Certificate of Appointment.pdf`.repla
 
 async function open(agentId, actorId, ctx, { agentSelf = false } = {}) {
   const a = await agentOf(agentId);
-  if (agentSelf && a.status !== "active") throw new AppError(409, "Your certificate is available once your onboarding is complete.");
+  if (agentSelf && !["onboarding", "active"].includes(a.status)) throw new AppError(409, "Your certificate is available once the college has countersigned your agreement.");
   const f = await latest(agentId);
   if (!f) throw new AppError(404, "There is no certificate of appointment for this agent yet.");
   const buffer = await draw(f);
@@ -41,7 +41,7 @@ async function open(agentId, actorId, ctx, { agentSelf = false } = {}) {
 async function statusFor(agentId) {
   const a = await agentOf(agentId);
   const f = await latest(agentId);
-  return { available: !!f && a.status === "active", exists: !!f, issued_at: f?.created_at || null, sent_at: a.certificate_sent_at || null };
+  return { available: !!f && ["onboarding", "active"].includes(a.status), exists: !!f, issued_at: f?.created_at || null, sent_at: a.certificate_sent_at || null };
 }
 
 // email it to the agent's main contact as an attachment
@@ -60,9 +60,5 @@ async function sendToAgent(agentId, actorId, ctx) {
   return { sent_to: address };
 }
 
-// called when onboarding finishes; never blocks or fails the activation
-const onActivated = (agentId, actor, ctx) =>
-  sendToAgent(agentId, actor?.id || null, ctx).catch((e) => console.error("certificate email failed:", e.message));
-
 const canSee = (role) => AGENT_PERMS.read.includes(role);
-module.exports = { latest, open, statusFor, sendToAgent, onActivated, canSee };
+module.exports = { latest, open, statusFor, sendToAgent, canSee };

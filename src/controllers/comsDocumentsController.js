@@ -23,6 +23,8 @@ const remove = asyncHandler(async (req, res) => ok(res, await docs.remove(req.us
 const download = asyncHandler(async (req, res) => send(res, await docs.open(req.user, req.params.id, req.params.docId, ctx(req))));
 const requestInfo = asyncHandler(async (req, res) => ok(res, await docs.requestInfo(req.user, req.params.id, req.body, ctx(req))));
 const terms = asyncHandler(async (req, res) => ok(res, await agents.recordTerms(req.user, req.params.id, req.body, ctx(req))));
+const termsDraft = asyncHandler(async (req, res) => ok(res, await agents.termsDraft(req.user, req.params.id)));
+const termsSend = asyncHandler(async (req, res) => ok(res, await agents.sendTerms(req.user, req.params.id, req.body, ctx(req))));
 
 // the completed application form (AFC-EAAF V2.0) as a PDF, for the agent folder
 const applicationPdf = asyncHandler(async (req, res) => {
@@ -65,4 +67,4 @@ const mineCertificateStatus = asyncHandler(async (req, res) => {
   ok(res, await cert.statusFor(found.id));
 });
 
-module.exports = { certificate, certificateSend, mineCertificate, mineCertificateStatus, list, upload, review, remove, download, requestInfo, terms, applicationPdf, mine, mineUpload, mineRemove, mineDownload };
+module.exports = { certificate, certificateSend, mineCertificate, mineCertificateStatus, list, upload, review, remove, download, requestInfo, terms, termsDraft, termsSend, applicationPdf, mine, mineUpload, mineRemove, mineDownload };

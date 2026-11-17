@@ -177,7 +177,7 @@ test("an officer emails the reference form; the referee answers it on a public p
   assert.ok(mails("marketing@afc.test", /reference received/i)[0], "the officer who sent it is notified");
   assert.equal((await audits("agent.reference_received", A)).length, 1);
   assert.equal((await dd(A)).items.find((i) => i.key === "referees").done, true);
-  assert.ok((await dd(A)).warnings.some((w) => /only one positive/i.test(w)));
+  assert.ok(!(await dd(A)).warnings.some((w) => /positive referee/i.test(w)), "one positive reference is enough");
   void r2;
 });
 
@@ -347,6 +347,16 @@ test("an agreement is sent from the agent record, signed by the agent, countersi
   assert.equal(done.body.data.status, "active");
   const detail = (await json("GET", `/api/agreements/${agId}`, { token: T.ceo })).body.data;
   assert.deepEqual(detail.files.map((f) => f.kind).sort(), ["certificate", "final"], "certificate of appointment is generated");
+  // at counter-sign the agent gets the signed agreement and the certificate in one email; the CEO keeps a copy
+  const approved = mails("owner@delta.in", /agreement is approved/i);
+  assert.equal(approved.length, 1);
+  assert.equal(approved[0].attachments.length, 2);
+  assert.ok(approved[0].attachments.some((f) => /Certificate of Appointment\.pdf$/.test(f.filename)));
+  assert.ok(approved[0].attachments.every((f) => f.size > 20000));
+  assert.equal(mails("ceo@x.com", /signed agreement/i).length + outbox.filter((m) => /^Signed agreement:/.test(m.subject)).length >= 1, true);
+  assert.ok((await pool.query("SELECT certificate_sent_at FROM agents WHERE id=$1", [A])).rows[0].certificate_sent_at, "certificate marked as sent");
+  const early = await json("GET", "/api/agent-application/certificate", { token: agentT });
+  assert.equal(early.body.data.available, true, "available to download from counter-sign");
   const cert = detail.files.find((f) => f.kind === "certificate");
   const dl = await fetch(`${base}/api/agreements/${agId}/files/${cert.id}/download`, { headers: { Authorization: `Bearer ${T.ceo}` } });
   assert.equal(dl.status, 200);
@@ -365,11 +375,15 @@ test("countersigning moves the agent to Onboarding and creates the five tasks wi
   assert.equal(by.PRISMS_ADD.due_date, await calendar.addBusinessDays(today, 5), "5 working days, public holidays honoured");
   assert.equal(by.WEBSITE_ADD.due_date, await calendar.addBusinessDays(today, 5));
   assert.equal(by.ASQANET_START.due_date, await calendar.addBusinessDays(today, 5), "within 5 days of signing (Processing Agent Application, step 6)");
-  assert.equal(by.ASQANET_START.legal_deadline, calendar.addDays(effective, 30), "30 calendar days from the agreement start is the legal backstop");
+  assert.equal(by.ASQANET_START.legal_deadline, null, "no separate 30-day backstop: the 5 working days apply");
   assert.equal(by.COMMISSION_REPORT.due_date, await calendar.addBusinessDays(today, 5));
   assert.equal(by.INDUCTION.due_date, calendar.addDays(today, 30));
-  assert.equal(by.PRISMS_ADD.owner_name, "Coe Test");
-  assert.equal(by.ASQANET_START.owner_name, "Coe Test", "the CoE administrator reports to ASQAnet and PRISMS");
+  assert.equal(by.PRISMS_ADD.owner_role, "compliance", "PRISMS belongs to compliance");
+  assert.equal(by.PRISMS_ADD.owner_name, "Compliance Test");
+  assert.equal(by.ASQANET_START.owner_role, "ceo", "the CEO reports to ASQAnet");
+  assert.equal(by.ASQANET_START.owner_name, "Ceo Test");
+  assert.match(by.WEBSITE_ADD.description, /Agency: Delta Education/);
+  assert.match(by.WEBSITE_ADD.description, /Email: owner@delta\.in/);
   assert.equal(by.WEBSITE_ADD.owner_role, "admin", "AFC Administration lists the agent on the website");
   assert.equal(by.COMMISSION_REPORT.owner_name, "Marketing Test");
   assert.equal(by.INDUCTION.owner_name, "Marketing Test");
@@ -397,7 +411,8 @@ test("the task board lists, filters and exports regulatory tasks; the export is 
   assert.equal((await get("/api/coms/tasks?type=PRISMS_ADD,INDUCTION", "compliance")).body.data.length, 2);
   assert.equal((await get("/api/coms/tasks?overdue=true", "compliance")).body.data.length, 0);
   assert.equal((await get(`/api/coms/tasks?agent_id=${A}`, "compliance")).body.data.length, 5);
-  assert.equal((await get("/api/coms/tasks?owner=me", "coe")).body.data.length, 2);
+  assert.equal((await get("/api/coms/tasks?owner=me", "compliance")).body.data.length, 1);
+  assert.equal((await get("/api/coms/tasks?owner=me", "ceo")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?search=delta", "compliance")).body.data.length, 5);
   assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 11);
 
@@ -414,21 +429,21 @@ test("a regulatory task needs evidence or a note; files are checked; only the ri
   const prisms = tasks.find((t) => t.type === "PRISMS_ADD");
   const url = `/api/coms/tasks/${prisms.id}/complete`;
   assert.equal((await post(url, "accounts", { note: "done" })).status, 403);
-  assert.equal((await post(url, "coe", {})).status, 400, "no evidence and no note");
-  assert.equal((await post(url, "coe", { file: { name: "run.exe", data: "AAAA" } })).status, 400);
-  assert.equal((await post(url, "coe", { file: { name: "fake.pdf", data: Buffer.from("not a pdf").toString("base64") } })).status, 400, "content must match the type");
-  const tooBig = await post(url, "coe", { file: { name: "big.pdf", data: Buffer.concat([Buffer.from("%PDF"), Buffer.alloc((env.evidenceMaxMb + 1) * 1024 * 1024)]).toString("base64") } });
+  assert.equal((await post(url, "compliance", {})).status, 400, "no evidence and no note");
+  assert.equal((await post(url, "compliance", { file: { name: "run.exe", data: "AAAA" } })).status, 400);
+  assert.equal((await post(url, "compliance", { file: { name: "fake.pdf", data: Buffer.from("not a pdf").toString("base64") } })).status, 400, "content must match the type");
+  const tooBig = await post(url, "compliance", { file: { name: "big.pdf", data: Buffer.concat([Buffer.from("%PDF"), Buffer.alloc((env.evidenceMaxMb + 1) * 1024 * 1024)]).toString("base64") } });
   assert.ok([400, 413].includes(tooBig.status), "too large");
   assert.equal(filesOnDisk() >= 1, true);
   const filesBefore = filesOnDisk();
 
-  const done = await post(url, "coe", { note: "Entered in PRISMS, screenshot attached", file: pdf(400) });
+  const done = await post(url, "compliance", { note: "Entered in PRISMS, screenshot attached", file: pdf(400) });
   assert.equal(done.status, 200);
   assert.equal(done.body.data.status, "done");
-  assert.equal(done.body.data.completed_by_name, "Coe Test");
+  assert.equal(done.body.data.completed_by_name, "Compliance Test");
   assert.ok(done.body.data.evidence.id);
   assert.equal(filesOnDisk(), filesBefore + 1);
-  assert.equal((await post(url, "coe", { note: "again" })).status, 409);
+  assert.equal((await post(url, "compliance", { note: "again" })).status, 409);
   const rec = (await get(`/api/coms/agents/${A}`, "director")).body.data;
   assert.ok(rec.prisms_recorded_at, "BR-02: PRISMS is now recorded");
   assert.equal(rec.status, "onboarding", "induction is still missing");
@@ -450,13 +465,8 @@ test("recording the induction makes the agent Active once agreement, PRISMS and 
   assert.equal((await audits("agent.activated", A)).length, 1);
 });
 
-test("the certificate of appointment is emailed when onboarding finishes, and can be downloaded and re-sent", async () => {
-  const cert = mails("owner@delta.in", /certificate of appointment/i);
-  assert.equal(cert.length, 1, "one email at activation");
-  assert.equal(cert[0].attachments.length, 1);
-  assert.match(cert[0].attachments[0].filename, /Delta Education - Certificate of Appointment\.pdf/);
-  assert.ok(cert[0].attachments[0].size > 20000, "a real PDF is attached");
-  assert.ok((await audits("agent.certificate_sent", A)).length === 1);
+test("the certificate of appointment can be downloaded and re-sent", async () => {
+  assert.equal((await audits("agent.certificate_sent", A)).length, 0, "nothing extra is sent when the agent becomes Active");
   // staff download
   const staffRes = await fetch(`${base}/api/coms/agents/${A}/certificate`, { headers: { Authorization: `Bearer ${T.director}` } });
   assert.equal(staffRes.status, 200);
@@ -473,7 +483,9 @@ test("the certificate of appointment is emailed when onboarding finishes, and ca
   assert.equal((await post(`/api/coms/agents/${A}/certificate/send`, "accounts")).status, 403);
   outbox.length = 0;
   assert.equal((await post(`/api/coms/agents/${A}/certificate/send`, "marketing")).status, 200);
-  assert.equal(mails("owner@delta.in", /certificate of appointment/i).length, 1);
+  const again = mails("owner@delta.in", /certificate of appointment/i);
+  assert.equal(again.length, 1);
+  assert.match(again[0].attachments[0].filename, /Delta Education - Certificate of Appointment\.pdf/);
 });
 
 test("recording the milestone on the agent record also finishes the matching task", async () => {
@@ -511,39 +523,38 @@ test("staff can create, assign and cancel general tasks", async () => {
 });
 
 // ------------------------------------------------------------------ reminders and escalation
-test("an overdue task is escalated to the manager after 2 working days, once (E5-1)", async () => {
-  const mgr = (await pool.query(`SELECT id FROM users WHERE email='coe@afc.test'`)).rows[0].id;
-  const mk = async (due) => (await pool.query(
-    `INSERT INTO coms_tasks (category, type, title, agent_id, due_date, owner_id) VALUES ('general','GENERAL',$2,$1,$3,$4) RETURNING id`,
-    [A, `Late task ${due}`, due, mgr])).rows[0].id;
-  const today = calendar.localDate();
-  // 10 calendar days ago is always more than 2 working days
-  const late = await mk(calendar.addDays(today, -10));
+test("a registration task is escalated to a manager on working day 4, once", async () => {
+  const D = await applied("Escalate Edu", "e@escalate.in");
+  const own = (await pool.query(`SELECT id FROM users WHERE email='compliance@afc.test'`)).rows[0].id;
+  const mk = async (daysAgo) => (await pool.query(
+    `INSERT INTO coms_tasks (category, type, title, agent_id, trigger_date, due_date, due_basis, owner_id)
+     VALUES ('regulatory','PRISMS_ADD',$2,$1, current_date - $3::int, current_date + 10, 'business', $4) RETURNING id`,
+    [D, `Registration ${daysAgo}`, daysAgo, own])).rows[0].id;
+  const fresh = await mk(1);
+  outbox.length = 0;
+  assert.equal((await tasksSvc.runAlerts()).escalated, 0, "day 1 is not escalated");
+  const old = await mk(10); // 10 calendar days is always at least 4 working days
   outbox.length = 0;
   const r1 = await tasksSvc.runAlerts();
-  assert.ok(r1.escalated >= 1);
-  assert.ok(mails("director@afc.test", /task escalated/i).length >= 1);
-  assert.ok(mails("coe@afc.test", /task overdue/i).length >= 1, "the owner is reminded first");
-  assert.ok((await pool.query(`SELECT escalated_at FROM coms_tasks WHERE id=$1`, [late])).rows[0].escalated_at);
+  assert.equal(r1.escalated, 1);
+  assert.ok(mails("director@afc.test", /task/i).length >= 1, "the manager is told");
+  assert.ok((await pool.query(`SELECT escalated_at FROM coms_tasks WHERE id=$1`, [old])).rows[0].escalated_at);
+  assert.equal((await pool.query(`SELECT escalated_at FROM coms_tasks WHERE id=$1`, [fresh])).rows[0].escalated_at, null);
   outbox.length = 0;
-  const r2 = await tasksSvc.runAlerts();
-  assert.equal(r2.escalated, 0);
-  assert.equal(mails("director@afc.test", /task escalated/i).length, 0, "only once");
+  assert.equal((await tasksSvc.runAlerts()).escalated, 0, "only once");
 });
 
-test("ASQAnet tasks alert the owner at day 20 and escalate at day 25 (BR-09)", async () => {
-  const D = await applied("Hotel Edu", "h@hotel.in");
+test("after the deadline only a manager can close a registration task", async () => {
+  const D = await applied("Late Edu", "l@late.in");
   const t = (await pool.query(
-    `INSERT INTO coms_tasks (category, type, title, agent_id, trigger_date, due_date, due_basis, owner_id)
-     VALUES ('regulatory','ASQANET_START','ASQAnet notice',$1, current_date - 21, current_date + 9, 'calendar', (SELECT id FROM users WHERE email='compliance@afc.test')) RETURNING id`, [D])).rows[0].id;
-  outbox.length = 0;
-  await tasksSvc.runAlerts();
-  assert.ok(mails("compliance@afc.test", /task overdue/i).some((m) => /ASQAnet/.test(m.subject)), "alert at day 20");
-  assert.equal((await pool.query(`SELECT escalated_at FROM coms_tasks WHERE id=$1`, [t])).rows[0].escalated_at, null);
-  await pool.query(`UPDATE coms_tasks SET trigger_date = current_date - 26 WHERE id = $1`, [t]);
-  outbox.length = 0;
-  await tasksSvc.runAlerts();
-  assert.ok(mails("ceo@afc.test", /task escalated/i).some((m) => /ASQAnet/.test(m.subject)), "escalated at day 25");
+    `INSERT INTO coms_tasks (category, type, title, agent_id, trigger_date, due_date, due_basis, owner_id, owner_role)
+     VALUES ('regulatory','WEBSITE_ADD','Website listing',$1, current_date - 12, current_date - 5, 'business', (SELECT id FROM users WHERE email='marketing@afc.test'), 'admin') RETURNING id`, [D])).rows[0].id;
+  const late = await post(`/api/coms/tasks/${t}/complete`, "marketing", { note: "Listed" });
+  assert.ok([403].includes(late.status), JSON.stringify(late.body));
+  assert.match(JSON.stringify(late.body), /past its deadline|permission/i);
+  const ok = await post(`/api/coms/tasks/${t}/complete`, "director", { note: "Listed (manager override)" });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal((await audits("task.completed", t))[0].metadata.manager_override, true);
 });
 
 test("the decision timer warns at day 7 and alerts at day 10 (BR-08)", async () => {
@@ -601,6 +612,55 @@ test("a safety-net job moves an approved agent with a signed agreement to Onboar
   assert.equal(await daily.reconcileOnboarding(), 1);
   assert.equal((await pool.query(`SELECT status FROM agents WHERE id=$1`, [G])).rows[0].status, "onboarding");
   assert.equal((await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agent_id=$1`, [G])).rows[0].c, 5);
+});
+
+// ------------------------------------------------------------------ termination and authorised staff
+test("terminating an agent stops their login at once and creates the removal tasks", async () => {
+  const G = await applied("Lima Edu", "l@lima.in");
+  const uid = (await pool.query(`SELECT id FROM users WHERE email='l@lima.in'`)).rows[0].id;
+  await pool.query(`UPDATE agents SET status='active' WHERE id=$1`, [G]);
+  await pool.query(`UPDATE users SET status='active' WHERE id=$1`, [uid]);
+  const agentT = await login("l@lima.in");
+  assert.ok(agentT, "can sign in before");
+  assert.equal((await json("GET", "/api/agent-application", { token: agentT })).status < 400, true);
+
+  assert.equal((await post(`/api/coms/agents/${G}/status`, "marketing", { status: "terminated", reason: "Breach" })).status, 403);
+  assert.equal((await post(`/api/coms/agents/${G}/status`, "ceo", { status: "terminated" })).status, 400, "a reason is needed");
+  const done = await post(`/api/coms/agents/${G}/status`, "ceo", { status: "terminated", reason: "Breach of the agreement" });
+  assert.equal(done.status, 200, JSON.stringify(done.body));
+
+  // the session they already had stops working, and they cannot sign in again
+  assert.equal((await json("GET", "/api/agent-application", { token: agentT })).status, 401);
+  assert.equal(await login("l@lima.in"), undefined);
+  assert.equal((await pool.query(`SELECT status FROM users WHERE id=$1`, [uid])).rows[0].status, "suspended");
+
+  const tasks = (await pool.query(`SELECT type, owner_role, due_date::text AS due, description FROM coms_tasks WHERE agent_id=$1 ORDER BY type`, [G])).rows;
+  assert.deepEqual(tasks.map((t) => t.type), ["ASQANET_END", "PRISMS_REMOVE", "WEBSITE_REMOVE"]);
+  const by = Object.fromEntries(tasks.map((t) => [t.type, t]));
+  assert.equal(by.PRISMS_REMOVE.owner_role, "compliance");
+  assert.equal(by.ASQANET_END.owner_role, "ceo");
+  assert.equal(by.WEBSITE_REMOVE.owner_role, "admin");
+  assert.equal(by.PRISMS_REMOVE.due, await calendar.addBusinessDays(calendar.localDate(), 5));
+  assert.match(by.PRISMS_REMOVE.description, /Breach of the agreement/);
+
+  // an administrator cannot switch the access back on
+  const [admin] = (await pool.query(`SELECT id FROM users WHERE role='admin' LIMIT 1`)).rows;
+  const adminT = await login("admin@afc.test");
+  const back = await json("PATCH", `/api/users/${uid}/status`, { token: adminT, body: { status: "active" } });
+  assert.equal(back.status, 409);
+  assert.ok(admin);
+});
+
+test("the CEO or an administrator marks staff as authorised staff", async () => {
+  const mid = (await pool.query(`SELECT id FROM users WHERE email='marketing@afc.test'`)).rows[0].id;
+  assert.equal((await json("PATCH", `/api/users/${mid}/authorised`, { token: T.marketing, body: { authorised: true } })).status, 403);
+  const on = await json("PATCH", `/api/users/${mid}/authorised`, { token: T.ceo, body: { authorised: true } });
+  assert.equal(on.status, 200);
+  assert.equal(on.body.data.is_authorised_staff, true);
+  assert.equal((await audits("user.authorised_staff_changed", String(mid))).length, 1);
+  const agentUid = (await pool.query(`SELECT id FROM users WHERE email='owner@delta.in'`)).rows[0].id;
+  assert.equal((await json("PATCH", `/api/users/${agentUid}/authorised`, { token: T.ceo, body: { authorised: true } })).status, 409, "agents cannot be authorised staff");
+  assert.equal((await json("PATCH", `/api/users/${mid}/authorised`, { token: T.ceo, body: { authorised: false } })).body.data.is_authorised_staff, false);
 });
 
 // ------------------------------------------------------------------ scheduler endpoint

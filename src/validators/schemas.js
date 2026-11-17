@@ -181,6 +181,7 @@ const listQuery = z.object({
 });
 
 const userStatus = z.object({ status: z.enum(["active", "suspended"]) });
+const userAuthorised = z.object({ authorised: z.boolean() }).strict();
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
 
@@ -410,12 +411,20 @@ const documentReview = z.object({
   note: z.string().trim().max(1000).optional(),
 }).strict().refine((v) => v.status !== "needs_update" || (v.note && v.note.length >= 3), { message: "Say what needs to change", path: ["note"] });
 const infoRequest = z.object({ message: z.string().trim().min(10, "Write what you need from the agent").max(3000) }).strict();
+const pct = (label) => z.coerce.number({ error: `Enter the ${label} percentage` }).min(0, "Cannot be below 0").max(100, "Cannot be above 100");
 const agentTerms = z.object({
-  commission_terms: z.string().trim().min(3, "Describe the commission").max(2000),
+  vet_percent: pct("VET").default(35),
+  elicos_percent: pct("ELICOS").default(30),
   bonus_terms: z.string().trim().max(2000).default(""),
+}).strict();
+const agentTermsSend = z.object({
+  subject: z.string().trim().min(3, "Write a subject").max(200),
+  body: z.string().trim().min(10, "Write the message").max(5000),
 }).strict();
 
 module.exports = {
+  userAuthorised,
+  agentTermsSend,
   agentDocument, documentParams, documentReview, infoRequest, agentTerms,
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
   comsAgentsQuery, uuidParam, personParams, holidayBody, auditQuery,

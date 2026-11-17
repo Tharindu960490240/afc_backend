@@ -18,7 +18,7 @@ const find = async (agentId, client) =>
   (await q(client).query(
     `SELECT d.*, ${fileInfo("d.coi_file_id")} AS coi_file,
             ob.first_name AS opened_first, ob.last_name AS opened_last,
-            db.first_name AS decided_first, db.last_name AS decided_last,
+            db.first_name AS decided_first, db.last_name AS decided_last, db.role AS decided_role,
             (SELECT COALESCE(json_agg(trim(u.first_name || ' ' || u.last_name)), '[]'::json)
                FROM users u WHERE u.id = ANY(d.preparers)) AS preparer_names
      FROM agent_due_diligence d

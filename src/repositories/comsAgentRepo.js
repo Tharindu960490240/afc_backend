@@ -17,7 +17,7 @@ const LIST_SELECT = `
   a.prisms_recorded_at, a.induction_recorded_at, a.rejection_reason, a.xero_contact_id, a.axcelerate_agent_id,
   a.coi_declared, a.coi_details, a.code_of_ethics_ack_at, a.information_confirmed_at, a.application_submitted_at,
   a.gst_registered, a.owner_name, a.staff_count, a.years_in_business, a.application_extra, a.privacy_agreed_at,
-  a.declaration_name, a.declaration_at, a.sms_contact_at, a.commission_terms, a.bonus_terms, a.terms_recorded_at,
+  a.declaration_name, a.declaration_at, a.sms_contact_at, a.commission_terms, a.bonus_terms, a.terms_recorded_at, a.commission_vet_pct, a.commission_elicos_pct, a.terms_sent_at,
   a.created_at, a.updated_at, a.deleted_at, a.delete_reason,
   m.first_name AS manager_first_name, m.last_name AS manager_last_name,
   (SELECT COUNT(*)::int FROM agent_persons p

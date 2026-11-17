@@ -32,7 +32,7 @@ async function getAll() {
       campuses: c.campuses, signer_name: c.signer.name, signer_position: c.signer.position,
     },
     has_custom_signature: !!settings.signatureImage(),
-    onboarding_tasks: settings.taskTemplates().map(({ type, title, owner_role, due_days, due_basis, legal_days, prefer_account_manager, enabled }) => ({ type, title, owner_role, due_days, due_basis, legal_days, prefer_account_manager, enabled })),
+    onboarding_tasks: settings.taskTemplates().map(({ type, title, owner_role, due_days, due_basis, prefer_account_manager, enabled }) => ({ type, title, owner_role, due_days, due_basis, prefer_account_manager, enabled })),
     roles: STAFF_ROLES,
   };
 }
@@ -140,7 +140,7 @@ const MUST_STAY_ON = ["PRISMS_ADD", "INDUCTION"]; // an agent cannot become Acti
 async function saveTasks(actor, { items }, ctx) {
   const current = settings.taskTemplates();
   const known = new Set(current.map((t) => t.type));
-  const before = current.map(({ type, title, owner_role, due_days, due_basis, legal_days, prefer_account_manager, enabled }) => ({ type, title, owner_role, due_days, due_basis, legal_days, prefer_account_manager, enabled }));
+  const before = current.map(({ type, title, owner_role, due_days, due_basis, prefer_account_manager, enabled }) => ({ type, title, owner_role, due_days, due_basis, prefer_account_manager, enabled }));
   const seen = new Set();
   items.forEach((it, i) => {
     if (!known.has(it.type)) throw fieldError(`items.${i}.type`, "Unknown task");
@@ -152,8 +152,8 @@ async function saveTasks(actor, { items }, ctx) {
   await withTransaction(async (client) => {
     for (const it of items) {
       await client.query(
-        `UPDATE onboarding_task_templates SET title=$2, owner_role=$3, due_days=$4, due_basis=$5, legal_days=$6, prefer_account_manager=$7, enabled=$8, updated_by=$9, updated_at=now() WHERE type=$1`,
-        [it.type, it.title, it.owner_role, it.due_days, it.due_basis, it.legal_days || null, it.prefer_account_manager, it.enabled, actor.id]);
+        `UPDATE onboarding_task_templates SET title=$2, owner_role=$3, due_days=$4, due_basis=$5, prefer_account_manager=$6, enabled=$7, updated_by=$8, updated_at=now() WHERE type=$1`,
+        [it.type, it.title, it.owner_role, it.due_days, it.due_basis, it.prefer_account_manager, it.enabled, actor.id]);
     }
     await log(actor, "settings.onboarding_tasks_updated", "onboarding_tasks", before, items, ctx);
   });

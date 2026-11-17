@@ -3,7 +3,8 @@
 //   - a countersigned agreement moves the agent to Onboarding and creates the PRISMS, ASQAnet, website
 //     and induction tasks with owners and due dates (public holidays honoured)
 //   - tasks are finished with evidence; PRISMS and induction feed the BR-01 / BR-02 hard stops
-//   - overdue tasks are escalated to the manager after 2 working days; ASQAnet alerts at day 20, escalates at day 25 (BR-09)
+//   - registration tasks have 5 working days; an open one is escalated to a manager on working day 4,
+//     and once the deadline has passed only a manager can close it
 // ===============================
 const AppError = require("../utils/AppError");
 const env = require("../config/env");
@@ -13,11 +14,11 @@ const settings = require("./settingsService");
 
 // used only until the Settings tables exist
 const DEFAULT_ONBOARDING = [
-  { type: "PRISMS_ADD", title: "Add {agent} to PRISMS", owner_role: ROLES.COE_ADMIN, due_days: 5, due_basis: "business", legal_days: null },
-  { type: "ASQANET_START", title: "Report {agent} to ASQAnet", owner_role: ROLES.COE_ADMIN, due_days: 5, due_basis: "business", legal_days: 30 },
-  { type: "WEBSITE_ADD", title: "List {agent} on the AFC website", owner_role: ROLES.ADMIN, due_days: 5, due_basis: "business", legal_days: null },
-  { type: "COMMISSION_REPORT", title: "Record commission and bonus for {agent} and report to Accounts", owner_role: ROLES.MARKETING, due_days: 5, due_basis: "business", legal_days: null },
-  { type: "INDUCTION", title: "Induct {agent} and record staff training", owner_role: ROLES.MARKETING, due_days: 30, due_basis: "calendar", legal_days: null, prefer_account_manager: true },
+  { type: "PRISMS_ADD", title: "Add {agent} to PRISMS", owner_role: ROLES.COMPLIANCE, due_days: 5, due_basis: "business" },
+  { type: "ASQANET_START", title: "Report {agent} to ASQAnet", owner_role: ROLES.CEO, due_days: 5, due_basis: "business" },
+  { type: "WEBSITE_ADD", title: "List {agent} on the AFC website", owner_role: ROLES.ADMIN, due_days: 5, due_basis: "business" },
+  { type: "COMMISSION_REPORT", title: "Record commission and bonus for {agent} and report to Accounts", owner_role: ROLES.MARKETING, due_days: 5, due_basis: "business" },
+  { type: "INDUCTION", title: "Induct {agent} and record staff training", owner_role: ROLES.MARKETING, due_days: 30, due_basis: "calendar", prefer_account_manager: true },
 ];
 const { parseUpload } = require("../utils/upload");
 const { toCsv } = require("../utils/csv");
@@ -67,7 +68,7 @@ async function meta() {
 async function create(actor, body, ctx) {
   if (!STAFF_ROLES.includes(actor.role)) throw new AppError(403, "You do not have permission to do that.");
   const def = TASK_TYPES[body.type];
-  if (def.category === "regulatory" && !isManager(actor) && actor.role !== ROLES.COE_ADMIN) throw new AppError(403, "You do not have permission to do that.");
+  if (def.category === "regulatory" && !isManager(actor) && actor.role !== ROLES.COMPLIANCE) throw new AppError(403, "You do not have permission to do that.");
   if (body.agent_id && !(await agentRepo.findById(body.agent_id))) throw fieldError("agent_id", "Agent not found");
   const owner = body.owner_id ? await repo.userById(body.owner_id) : null;
   if (body.owner_id && (!owner || owner.status !== "active" || !STAFF_ROLES.includes(owner.role))) throw fieldError("owner_id", "Choose an active staff member");
@@ -102,18 +103,53 @@ async function createOnboardingTasks(client, { agent, agreement, actorId }) {
   const spec = [];
   for (const t of templates.length ? templates : DEFAULT_ONBOARDING) {
     const due = t.due_basis === "calendar" ? calendar.addDays(today, t.due_days) : await calendar.addBusinessDays(today, t.due_days);
-    spec.push([t.type, String(t.title).replace(/\{agent\}/g, agent.legal_name), due, t.due_basis, t.legal_days ? calendar.addDays(start, t.legal_days) : null, t.owner_role, t.prefer_account_manager ? manager : null]);
+    spec.push([t.type, String(t.title).replace(/\{agent\}/g, agent.legal_name), due, t.due_basis, null, t.owner_role, t.prefer_account_manager ? manager : null]);
   }
   const created = [];
+  const people = await agentRepo.persons(agent.id, client);
+  const rep = people.find((p) => p.is_primary_contact) || people[0];
+  const listing = [
+    `Agency: ${agent.legal_name}`,
+    ...(agent.trading_names?.length ? [`Trading name: ${agent.trading_names.join(", ")}`] : []),
+    `Country: ${agent.country || "-"}`,
+    `Address: ${agent.principal_address || agent.registered_office_address || "-"}`,
+    `Representative: ${rep?.name || "-"}`,
+    `Email: ${rep?.email || agent.email || "-"}`,
+    `Phone: ${agent.phone || "-"}`,
+  ].join("\n");
   for (const [type, title, due, basis, legal, role, prefer] of spec) {
     const ownerId = await repo.ownerFor(role, prefer);
     const id = await repo.insert(client, {
       category: TASK_TYPES[type].category, type, title, agentId: agent.id, agreementId: agreement.id, triggerEvent: "agreement_countersigned",
       triggerDate: today, dueDate: due, dueBasis: basis, legalDeadline: legal, ownerId, ownerRole: role, actorId,
+      description: type === "WEBSITE_ADD" ? `Listing details for the website:\n${listing}` : null,
     });
     if (id) created.push({ id, ownerId, role });
   }
   return created;
+}
+
+// Termination: remove the agent from PRISMS and the website, and tell ASQAnet the agreement has ended (same 5 working days)
+async function createTerminationTasks(client, agent, actorId, reason) {
+  const today = calendar.localDate();
+  const due = await calendar.addBusinessDays(today, 5);
+  const note = reason ? `Reason for termination: ${reason}` : null;
+  const made = [];
+  for (const [type, title] of [
+    ["PRISMS_REMOVE", `Remove ${agent.legal_name} from PRISMS`],
+    ["ASQANET_END", `Report the end of the agreement with ${agent.legal_name} to ASQAnet`],
+    ["WEBSITE_REMOVE", `Remove ${agent.legal_name} from the AFC website`],
+  ]) {
+    const role = roleFor(type) || TASK_TYPES[type].ownerRole;
+    const ownerId = await repo.ownerFor(role);
+    const id = await repo.insert(client, {
+      category: TASK_TYPES[type].category, type, title, description: note, agentId: agent.id, triggerEvent: "agent_terminated",
+      triggerDate: today, dueDate: due, dueBasis: "business", ownerId, ownerRole: role, actorId,
+    });
+    if (id) made.push({ id, ownerId, role });
+  }
+  await audit.log({ actorId, action: "agent.termination_tasks_created", entityType: "agent", entityId: agent.id, metadata: { tasks: made.length }, }, client);
+  return made;
 }
 
 // Called after an agreement is countersigned (outside its transaction: a failure here never undoes the signature).
@@ -154,8 +190,6 @@ async function maybeActivate(agentId, actor, ctx) {
     await audit.log({ actorId: actor.id, action: "agent.activated", entityType: "agent", entityId: agentId, before: { status: "onboarding" }, after: { status: "active" }, ...ctx }, client);
     return true;
   });
-  // the certificate of appointment goes to the agent once onboarding is finished
-  if (activated) await require("./certificateService").onActivated(agentId, actor, ctx);
   return activated;
 }
 
@@ -165,6 +199,10 @@ async function complete(actor, id, { note, file }, ctx) {
   if (!t0) throw new AppError(404, "Task not found.");
   if (!canWork(actor, t0)) throw new AppError(403, "You do not have permission to do that.");
   if (t0.status !== "open") throw new AppError(409, "This task is already closed.");
+  const late = t0.due_date < calendar.localDate();
+  if (late && t0.category === "regulatory" && !isManager(actor)) {
+    throw new AppError(403, "This task is past its deadline. Only a manager can close it.");
+  }
   if (t0.category === "regulatory" && !file && !String(note || "").trim()) {
     throw fieldError("note", "Add evidence (a file) or a note saying what was done");
   }
@@ -190,7 +228,7 @@ async function complete(actor, id, { note, file }, ctx) {
       await audit.log({
         actorId: actor.id, action: "task.completed", entityType: "task", entityId: id,
         before: { status: "open" }, after: { status: "done" },
-        metadata: { type: t.type, agent: t.agent_id, evidence: file ? file.name : null, note: note || null, late: t.due_date < calendar.localDate() }, ...ctx,
+        metadata: { type: t.type, agent: t.agent_id, evidence: file ? file.name : null, note: note || null, late: t.due_date < calendar.localDate(), manager_override: t.due_date < calendar.localDate() && t.category === "regulatory" }, ...ctx,
       }, client);
     });
   } catch (err) {
@@ -253,34 +291,26 @@ async function exportCsv(actor, q, ctx) {
 async function runAlerts() {
   const today = calendar.localDate();
   const counts = { warned: 0, escalated: 0 };
+  const escalateDay = settings.timers().task_escalation_days;
   const managers = await repo.usersWithRoles([ROLES.DIRECTOR]);
   const ceo = await repo.usersWithRoles([ROLES.CEO]);
-  const compliance = await repo.usersWithRoles([ROLES.COMPLIANCE]);
   const tell = (users, t, level) => users.forEach((u) => email.sendTaskAlert({ to: u.email, firstName: u.first_name, title: t.title, agentName: t.agent_name, dueDate: t.due_date, level, link }));
 
   for (const t of await repo.openRegulatory()) {
     const owner = t.owner_id ? await repo.userById(t.owner_id) : null;
     const ownerList = owner?.status === "active" ? [owner] : [];
-    if (t.type === "ASQANET_START" || t.type === "ASQANET_END") {
-      // BR-09: alert at day 20, escalate at day 25 (calendar days from the trigger)
-      const day = Math.round((new Date(`${today}T00:00:00Z`) - new Date(`${t.trigger_day}T00:00:00Z`)) / 86400000);
-      if (day >= 25 && !t.escalated_at) { tell([...managers, ...ceo, ...compliance], t, "escalated"); await repo.markEscalated(t.id); counts.escalated++; }
-      else if (day >= 20 && !t.warned_at) { tell(ownerList.length ? ownerList : compliance, t, "overdue"); await repo.markWarned(t.id); counts.warned++; }
-      continue;
-    }
-    if (t.due_date >= today) continue;
-    if (!t.warned_at) { tell(ownerList, t, "overdue"); await repo.markWarned(t.id); counts.warned++; }
-    // escalation to the manager 2 working days after the due date
-    if (!t.escalated_at && (await calendar.businessDaysBetween(t.due_date, today)) >= 2) {
-      tell(managers.length ? managers : ceo, t, "escalated");
+    // registration tasks: escalate to a manager on working day 4 (the deadline is working day 5)
+    if (!t.escalated_at && (await calendar.businessDaysBetween(t.trigger_day, today)) >= escalateDay) {
+      tell(managers.length ? [...managers, ...ceo] : ceo, t, t.due_date < today ? "escalated" : "due_soon");
       await repo.markEscalated(t.id);
       counts.escalated++;
     }
+    if (t.due_date < today && !t.warned_at) { tell(ownerList, t, "overdue"); await repo.markWarned(t.id); counts.warned++; }
   }
   return counts;
 }
 
 module.exports = {
-  list, forAgent, meta, create, createOnboardingTasks, onAgreementCountersigned, maybeActivate, complete, assign, cancel,
+  list, forAgent, meta, create, createOnboardingTasks, createTerminationTasks, onAgreementCountersigned, maybeActivate, complete, assign, cancel,
   openEvidence, exportCsv, runAlerts, canWork,
 };

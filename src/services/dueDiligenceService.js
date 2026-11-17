@@ -109,7 +109,6 @@ function buildChecklist(a, dd, referees, checks, persons, docState) {
   const blockers = items.filter((i) => !i.done).map((i) => (i.failed ? `${i.label}: failed. Resolve it or reject the application.` : `${i.label} is not recorded yet.`));
   const warnings = [];
   if (!a.sms_contact_at) warnings.push("The agent's contact has not been created in the student management system yet (procedure step 2).");
-  if (positive === 1) warnings.push("Only one positive referee check. Two are recommended.");
   if (checks.some((c) => c.outcome === "negative")) warnings.push("A referee gave a negative reference. Read it before deciding.");
   if (a.coi_declared) warnings.push("The applicant declared a conflict of interest.");
   return { items, blockers, warnings, positive };
@@ -146,7 +145,7 @@ async function get(actor, agentId) {
       reviewed_at: dd.coi_reviewed_at, review_note: dd.coi_review_note, file: dd.coi_file,
     },
     prepared_by: dd.preparer_names,
-    decision: decided ? { decision: dd.decision, reason: dd.decision_reason, at: dd.decided_at, by: `${dd.decided_first || ""} ${dd.decided_last || ""}`.trim() } : null,
+    decision: decided ? { decision: dd.decision, reason: dd.decision_reason, at: dd.decided_at, by: `${dd.decided_first || ""} ${dd.decided_last || ""}`.trim(), role: dd.decided_role || null } : null,
     decision_state: sla?.decision || null,
     // the decision button: right role, file not prepared by this person (BR-06), still open
     can_decide: allowed(actor, "decide") && !preparer && a.status === "due_diligence",

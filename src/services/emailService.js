@@ -188,18 +188,31 @@ function sendAgreementRejected({ to, firstName, title, reason }) {
   });
 }
 
-function sendAgreementApproved({ to, firstName, title, expiresAt }) {
+function sendAgreementApproved({ to, firstName, title, expiresAt, files }) {
   return deliver(to, "Your agreement is approved", {
     preheader: `Valid until ${dateText(expiresAt)}.`,
     title: "Agreement approved",
     greeting: `Hello ${firstName},`,
     paragraphs: [
       `**${title}** has been approved and countersigned by the college. It is valid until **${dateText(expiresAt)}**.`,
-      "You can now submit students. The fully signed copy is available to download in the portal.",
+      files?.length
+        ? "The fully signed agreement and your Certificate of Appointment are attached to this email as PDFs. You can also download them from the portal at any time."
+        : "The fully signed copy is available to download in the portal.",
+      "**What happens next:** the college now registers you (PRISMS, ASQAnet and the college website) and your account manager will contact you for your induction.",
     ],
     action: { text: "Open my agreement", url: agentLink() },
     notice: { tone: "success", title: "You are all set", text: "We will remind you before the agreement expires." },
-  });
+  }, files);
+}
+
+// the countersigning staff member keeps a copy of the fully signed agreement
+function sendSignedCopyToStaff({ to, firstName, agentName, title, files }) {
+  return deliver(to, `Signed agreement: ${agentName}`, {
+    preheader: `${title} is signed by both parties.`,
+    title: "Fully signed agreement",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [`**${title}** for **${agentName}** is now signed by both parties. The signed copy is attached for your records.`],
+  }, files);
 }
 
 // the certificate of appointment, attached as a PDF once the agent's onboarding is finished
@@ -209,7 +222,7 @@ function sendCertificate({ to, firstName, agencyName, filename, buffer }) {
     title: "Your Certificate of Appointment",
     greeting: `Hello ${firstName},`,
     paragraphs: [
-      `Welcome to ${require("../emails/college").name}. Your onboarding is complete and **${agencyName}** is now an authorised representative of the college.`,
+      `Welcome to ${require("../emails/college").name}. **${agencyName}** is appointed as an authorised representative of the college.`,
       "Your Certificate of Appointment is attached to this email as a PDF. You can also download it at any time from your agent portal.",
     ],
     action: { text: "Open my portal", url: `${env.frontendUrl}/agent/agreement` },
@@ -335,6 +348,20 @@ function sendApplicationReceived({ to, firstName, legalName, missing = [] }) {
   });
 }
 
+// Marketing staff are told about every new application, with a short summary
+function sendNewApplicationToStaff({ to, firstName, agentName, agencyName, country, link }) {
+  return deliver(to, `New agent application: ${agencyName || agentName}`, {
+    preheader: `${agentName} has applied to become an agent.`,
+    title: "New agent application",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `**${agencyName || agentName}**${country ? ` (${country})` : ""} has submitted an agent application. Contact: ${agentName}.`,
+      "The acknowledgement has gone to the applicant. A decision is due within 10 working days.",
+    ],
+    action: { text: "Open the application", url: link },
+  });
+}
+
 function sendAgentRegistrationToAdmin({ to, firstName, agentName, agencyName, country, link }) {
   return deliver(to, `New agent registration: ${agentName}`, {
     preheader: `${agentName} registered from the website.`,
@@ -356,6 +383,7 @@ function sendAgentApproved({ to, firstName, signInUrl }) {
     paragraphs: [
       "Your registration as an education agent with Australian Federation College has been approved.",
       "You can sign in now. The college will send you the agent agreement to read and sign in the portal.",
+      "**Next steps:** 1) sign in and check your details; 2) read and sign the agent agreement when it arrives; 3) the college countersigns it and sends you your Certificate of Appointment.",
     ],
     action: { text: "Sign in", url: signInUrl },
   });
@@ -430,8 +458,8 @@ function sendTaskAlert({ to, firstName, title, agentName, dueDate, level, link }
     title: heading,
     greeting: `Hello ${firstName},`,
     paragraphs: [
-      `**${title}**${agentName ? ` for **${agentName}**` : ""} is ${level === "due" ? "due" : "overdue"} (due ${dueDate}).`,
-      level === "escalated" ? "It has been escalated to you because it is still open." : "Please complete it and add the evidence on the task board.",
+      `**${title}**${agentName ? ` for **${agentName}**` : ""} is ${level === "overdue" || level === "escalated" ? "overdue" : "still open"} (due ${dueDate}).`,
+      level === "escalated" ? "It has been escalated to you because it is still open." : level === "due_soon" ? "It has not been finished yet and is due soon. It has been escalated to you so it is not missed." : "Please complete it and add the evidence on the task board.",
     ],
     action: { text: "Open the task board", url: link },
   });
@@ -481,10 +509,10 @@ function sendTermsReport({ to, firstName, agencyName, country, commission, bonus
 module.exports = {
   sendInfoRequest, sendTermsReport,
   sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned,
-  sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin,
+  sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin, sendNewApplicationToStaff,
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,
   sendAgreementSent, sendAgreementSubmitted, sendAgreementRejected, sendAgreementApproved,
-  sendCertificate, sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,
+  sendCertificate, sendSignedCopyToStaff, sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,
   sendAgreementExpiryToAdmin,
 };

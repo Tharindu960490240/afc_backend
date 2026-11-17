@@ -1,6 +1,6 @@
 // ===============================================================
 // Daily agreement reminders (email only; documents stay in the portal).
-//   - agent has not signed:       every 3 days, up to 5 reminders
+//   - agent has not signed:       after 5 unsigned days, then every 5 days, up to 5 reminders
 //   - admin has not reviewed:     after 2 days, then every 2 days
 //   - active agreement expiring:  at 60, 30 and 7 days, and once it expires
 // ===============================================================
@@ -10,7 +10,7 @@ const { query } = require("../config/db");
 const repo = require("../repositories/agreementRepo");
 const email = require("../services/emailService");
 
-const AGENT_EVERY_DAYS = 3;
+const AGENT_EVERY_DAYS = 5;
 const AGENT_MAX = 5;
 const REVIEW_AFTER_DAYS = 2;
 

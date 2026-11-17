@@ -21,6 +21,11 @@ const PLACEHOLDERS = {
   agency_name: "Agency name",
   business_number: "Agency business number",
   country: "Agency country",
+  trading_name: "Agency trading name (the agency name when there is none)",
+  agent_address: "Agency address",
+  agent_position: "Representative's position",
+  agent_phone: "Agency phone number",
+  agreement_date: "Date the agreement is sent",
   validity_months: "Length of the agreement in months",
   effective_date: "Start date (set when the college countersigns)",
   expiry_date: "End date (start date plus the length)",
@@ -56,6 +61,11 @@ function snapshotFor(templateBody, agent, months) {
     agency_name: agent.agency_name || "the Agent's agency",
     business_number: agent.business_number || "not provided",
     country: agent.country || "not provided",
+    trading_name: agent.trading_name || agent.agency_name || "the Agent's agency",
+    agent_address: agent.address || "not provided",
+    agent_position: agent.position || "Authorised representative",
+    agent_phone: agent.phone || "not provided",
+    agreement_date: longDate(new Date()),
     validity_months: String(months),
   });
 }

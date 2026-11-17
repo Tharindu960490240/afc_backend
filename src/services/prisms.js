@@ -21,7 +21,7 @@ function prismsMissing(agent, directorCount) {
 // Items the application form collects besides the PRISMS fields (two referees, declarations).
 function applicationMissing(agent, refereeCount) {
   const missing = [];
-  if (refereeCount < 2) missing.push({ key: "referees", label: refereeCount ? "A second referee" : "Two referees" });
+  if (refereeCount < 1) missing.push({ key: "referees", label: "One referee" });
   if (agent.coi_declared === null || agent.coi_declared === undefined) missing.push({ key: "coi", label: "Conflict-of-interest declaration" });
   if (!agent.code_of_ethics_ack_at) missing.push({ key: "code_of_ethics", label: "Code of ethics acknowledgement" });
   return missing;

@@ -263,6 +263,7 @@ async function changeStatus(actor, id, { status: to, reason }, ctx) {
     await repo.setStatus(client, id, to, actor.id, { reason });
     await repo.addHistory(client, { agentId: id, from, to, reason, actorId: actor.id });
     if (to === "due_diligence") await ddRepo.open(client, id, actor.id); // starts the checklist; the officer is the preparer (BR-06)
+    if (to === "terminated") await terminate(client, a, actor, reason);
     await audit.log({ actorId: actor.id, action: "agent.status_changed", entityType: ENTITY, entityId: id, before: { status: from }, after: { status: to }, metadata: { reason: reason || null }, ...ctx }, client);
     return { from, to };
   });
@@ -270,6 +271,18 @@ async function changeStatus(actor, id, { status: to, reason }, ctx) {
   if (result.from === "prospect" && result.to === "applied") await startClock(id);
   return getDetail(actor, id);
 }
+
+// Termination: the agent's logins stop working at once, and the PRISMS, ASQAnet and website removal tasks are created.
+async function terminate(client, agent, actor, reason) {
+  await client.query(
+    `UPDATE users SET status = 'suspended', token_version = token_version + 1, updated_at = now()
+      WHERE id IN (SELECT portal_user_id FROM agent_persons WHERE agent_id = $1 AND portal_user_id IS NOT NULL) AND status = 'active'`, [agent.id]);
+  await require("./taskService").createTerminationTasks(client, agent, actor.id, reason);
+}
+const isTerminatedLogin = async (userId) => {
+  const found = await repo.findByPortalUser(userId);
+  return !!found && (await repo.findById(found.id))?.status === "terminated";
+};
 
 // Starts the 3 / 10 working-day clock (AG-03, AG-05).
 async function startClock(id, client) {
@@ -380,33 +393,67 @@ async function recordMilestone(actor, id, { type, date }, ctx) {
   return getDetail(actor, id);
 }
 
-// Procedure step 6: record the commission and bonus in the agent list and report them to AFC Accounts
+// Procedure step 6, part 1: staff record the commission structure (EAA Schedule 1). Nothing is emailed yet.
+const pctText = (n) => `${Number(n)}%`;
+const termsText = (vet, elicos) => `VET courses: ${pctText(vet)} of tuition fees paid. ELICOS courses: ${pctText(elicos)} of tuition fees paid (EAA Schedule 1).`;
+
 async function recordTerms(actor, id, body, ctx) {
   need(actor, "sendAgreement");
   const a = await repo.findById(id);
   if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
-  if (!["approved", "onboarding", "active"].includes(a.status)) throw new AppError(409, "Commission and bonus are recorded once the agent is approved.");
-  const first = !a.terms_recorded_at;
+  if (!["approved", "onboarding", "active"].includes(a.status)) throw new AppError(409, "Commission is recorded once the agent is approved.");
+  const text = termsText(body.vet_percent, body.elicos_percent);
   await withTransaction(async (client) => {
     await client.query(
-      `UPDATE agents SET commission_terms = $2, bonus_terms = $3, terms_recorded_at = now(), terms_recorded_by = $4, updated_at = now(), updated_by = $4 WHERE id = $1`,
-      [id, body.commission_terms, body.bonus_terms || null, actor.id]);
-    await client.query(
-      `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $2, completion_note = 'Commission and bonus recorded and sent to Accounts',
-         updated_at = now() WHERE agent_id = $1 AND type = 'COMMISSION_REPORT' AND status = 'open' AND deleted_at IS NULL`, [id, actor.id]);
+      `UPDATE agents SET commission_vet_pct = $2, commission_elicos_pct = $3, commission_terms = $4, bonus_terms = $5,
+         terms_recorded_at = now(), terms_recorded_by = $6, terms_sent_at = NULL, terms_sent_by = NULL, updated_at = now(), updated_by = $6 WHERE id = $1`,
+      [id, body.vet_percent, body.elicos_percent, text, body.bonus_terms || null, actor.id]);
     await audit.log({
       actorId: actor.id, action: "agent.terms_recorded", entityType: ENTITY, entityId: id,
       before: { commission_terms: a.commission_terms || null, bonus_terms: a.bonus_terms || null },
-      after: { commission_terms: body.commission_terms, bonus_terms: body.bonus_terms || null }, ...ctx,
+      after: { commission_terms: text, bonus_terms: body.bonus_terms || null }, ...ctx,
     }, client);
   });
+  return { ...(await getDetail(actor, id)), draft: await termsDraft(actor, id) };
+}
+
+// Part 2: the system drafts the email to Accounts; staff read it, change it if they want, and send it.
+async function termsDraft(actor, id) {
+  need(actor, "sendAgreement");
+  const a = await repo.findById(id);
+  if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
+  if (!a.terms_recorded_at) throw new AppError(409, "Record the commission first.");
   const accounts = await require("../repositories/taskRepo").usersWithRoles([ROLES.ACCOUNTS]);
-  accounts.forEach((u) => email.sendTermsReport({
-    to: u.email, firstName: u.first_name, agencyName: a.legal_name, country: a.country,
-    commission: body.commission_terms, bonus: body.bonus_terms, by: `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "A staff member",
-    link: `${env.frontendUrl}/coms/agents/${id}`,
-  }));
-  return { ...(await getDetail(actor, id)), accounts_notified: accounts.length, first };
+  const by = `${actor.first_name || ""} ${actor.last_name || ""}`.trim() || "AFC";
+  return {
+    to: accounts.map((u) => ({ name: `${u.first_name} ${u.last_name || ""}`.trim(), email: u.email })),
+    subject: `New agent commission: ${a.legal_name}`,
+    body: [
+      "Hello Accounts team,",
+      `${a.legal_name} (${a.country}) has been appointed as an education agent for Australian Federation College. Please add these commission terms to the agent list.`,
+      `Commission (Schedule 1 of the Education Agent Agreement):\n- VET courses: ${pctText(a.commission_vet_pct ?? 35)} of tuition fees paid\n- ELICOS courses: ${pctText(a.commission_elicos_pct ?? 30)} of tuition fees paid`,
+      ...(a.bonus_terms ? [`Bonus: ${a.bonus_terms}`] : []),
+      `Kind regards,\n${by}\nAustralian Federation College`,
+    ].join("\n\n"),
+  };
+}
+
+async function sendTerms(actor, id, body, ctx) {
+  need(actor, "sendAgreement");
+  const a = await repo.findById(id);
+  if (!a || a.deleted_at) throw new AppError(404, "Agent not found.");
+  if (!a.terms_recorded_at) throw new AppError(409, "Record the commission first.");
+  const accounts = await require("../repositories/taskRepo").usersWithRoles([ROLES.ACCOUNTS]);
+  if (!accounts.length) throw new AppError(409, "There is no active Accounts user to send this to.");
+  await withTransaction(async (client) => {
+    await client.query(`UPDATE agents SET terms_sent_at = now(), terms_sent_by = $2, updated_at = now() WHERE id = $1`, [id, actor.id]);
+    await client.query(
+      `UPDATE coms_tasks SET status = 'done', completed_at = now(), completed_by = $2, completion_note = 'Commission recorded and sent to Accounts',
+         updated_at = now() WHERE agent_id = $1 AND type = 'COMMISSION_REPORT' AND status = 'open' AND deleted_at IS NULL`, [id, actor.id]);
+    await audit.log({ actorId: actor.id, action: "agent.terms_sent", entityType: ENTITY, entityId: id, metadata: { to: accounts.map((u) => u.email), subject: body.subject }, ...ctx }, client);
+  });
+  accounts.forEach((u) => email.sendAgentDecision({ to: u.email, firstName: u.first_name, subject: body.subject, body: body.body.replace(/^Hello[^\n]*\n+/i, "") }));
+  return { ...(await getDetail(actor, id)), accounts_notified: accounts.length };
 }
 
 // E1-5: the officer sends the agreement from the agent record
@@ -491,6 +538,13 @@ async function acknowledge(agentId) {
   const missing = [...prismsMissing(a, a.director_count), ...applicationMissing(a, referees.length)].map((m) => m.label).concat(missingDocs);
   await email.sendApplicationReceived({ to: to.email, firstName: to.name.split(" ")[0], legalName: a.legal_name, missing });
   await repo.markAcknowledged(agentId);
+  // marketing staff get a summary of the new application
+  try {
+    const marketing = (await require("../config/db").query(`SELECT email, first_name FROM users WHERE role = 'marketing_officer' AND status = 'active'`)).rows;
+    for (const m of marketing) {
+      email.sendNewApplicationToStaff({ to: m.email, firstName: m.first_name, agentName: to.name, agencyName: a.legal_name, country: a.country, link: `${env.frontendUrl}/coms/agents/${agentId}` }).catch(() => {});
+    }
+  } catch (e) { console.error("marketing alert failed:", e.message); }
 }
 
 // ---------- the application form ----------
@@ -656,7 +710,7 @@ async function exportCsv(actor, q, ctx) {
 }
 
 module.exports = {
-  recordTerms,
+  isTerminatedLogin, recordTerms, termsDraft, sendTerms,
   list, getDetail, meta, createFromEoi, sendApplicationLink, update, changeStatus, remove, restore,
   addPerson, updatePerson, removePerson, recordMilestone, sendAgreement,
   linkNewPortalUser, saveApplication, myApplication, submitApplication, markApplicationReceived, acknowledge, syncDecision, approvalMissing, syncUserStatus, exportCsv, slaFor,

@@ -9,7 +9,7 @@ let cache = null;
 let loadedAt = 0;
 let loading = null;
 
-const TIMER_DEFAULTS = Object.freeze({ ack_days: 3, decision_days: 10, amber_after_days: 7, referee_link_days: 21, referee_reminder_days: 3, referee_max_reminders: 2 });
+const TIMER_DEFAULTS = Object.freeze({ ack_days: 3, decision_days: 10, amber_after_days: 7, referee_link_days: 21, referee_reminder_days: 3, referee_max_reminders: 2, task_escalation_days: 4 });
 
 const defaults = () => ({
   questions: C.REFERENCE_QUESTIONS.map((q, i) => ({ key: q.key, label: q.label, type: q.type, required: q.required, favourable: "favourable" in q ? q.favourable : null, ask_details: !!q.detail, sort_order: i + 1, active: true })),

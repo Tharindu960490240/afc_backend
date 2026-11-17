@@ -12,4 +12,9 @@ const setStatus = asyncHandler(async (req, res) => {
   res.json({ success: true, data: user });
 });
 
-module.exports = { list, setStatus };
+const setAuthorised = asyncHandler(async (req, res) => {
+  const user = await userService.setAuthorised(req.user, req.params.id, req.body.authorised, clientInfo(req));
+  res.json({ success: true, data: user });
+});
+
+module.exports = { list, setStatus, setAuthorised };

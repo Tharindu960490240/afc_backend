@@ -68,7 +68,7 @@ async function main() {
       [email, hash, first, last, role]);
   }
   const staff = async (role) => (await pool.query("SELECT id FROM users WHERE role=$1 AND is_active IS NOT FALSE ORDER BY id LIMIT 1", [role]).catch(() => pool.query("SELECT id FROM users WHERE role=$1 ORDER BY id LIMIT 1", [role]))).rows[0]?.id || null;
-  const marketing = await staff("marketing_officer"), director = await staff("director"), compliance = await staff("compliance"), coe = await staff("coe_admin");
+  const marketing = await staff("marketing_officer"), director = await staff("director"), compliance = await staff("compliance"), coe = await staff("coe_admin"), ceo = await staff("ceo");
   const template = (await pool.query("SELECT id, body FROM agreement_templates WHERE is_active ORDER BY id DESC LIMIT 1")).rows[0];
   const logins = [];
   let added = 0;
@@ -88,9 +88,11 @@ async function main() {
       `UPDATE agents SET gst_registered = $2, owner_name = $3, staff_count = $4, years_in_business = $5, application_extra = $6::jsonb,
          privacy_agreed_at = application_submitted_at, declaration_name = $3, declaration_at = application_submitted_at,
          sms_contact_at = CASE WHEN $7 THEN application_received_at + interval '1 day' END,
-         commission_terms = $8, bonus_terms = $9, terms_recorded_at = CASE WHEN $8::text IS NOT NULL THEN now() END WHERE id = $1`,
+         commission_terms = $8, bonus_terms = $9, terms_recorded_at = CASE WHEN $8::text IS NOT NULL THEN now() END,
+         commission_vet_pct = CASE WHEN $8::text IS NOT NULL THEN 35 END, commission_elicos_pct = CASE WHEN $8::text IS NOT NULL THEN 30 END,
+         terms_sent_at = CASE WHEN $8::text IS NOT NULL THEN now() END WHERE id = $1`,
       [id, a.country === "Australia", "Owner of " + a.name.replace("Demo - ", ""), 8, 6, JSON.stringify(EXTRA(a)), !['applied', 'prospect'].includes(a.status),
-       a.status === "active" ? "10% of tuition for each enrolled student" : null, a.status === "active" ? "$500 after 10 enrolments in a year" : null]);
+       a.status === "active" ? "VET courses: 35% of tuition fees paid. ELICOS courses: 30% of tuition fees paid (EAA Schedule 1)." : null, a.status === "active" ? "$500 after 10 enrolments in a year" : null]);
     if (!['applied', 'prospect'].includes(a.status)) {
       for (const kind of ["business_registration", "agency_profile"]) {
         const f = (await pool.query(
@@ -126,8 +128,8 @@ async function main() {
     }
     if (a.tasks) {
       const admin = await staff("admin");
-      const rows = [["PRISMS_ADD", `Add ${a.name} to PRISMS`, "regulatory", coe, "coe_admin", 5],
-                    ["ASQANET_START", `Report ${a.name} to ASQAnet`, "regulatory", coe, "coe_admin", 5],
+      const rows = [["PRISMS_ADD", `Add ${a.name} to PRISMS`, "regulatory", compliance, "compliance", 5],
+                    ["ASQANET_START", `Report ${a.name} to ASQAnet`, "regulatory", ceo, "ceo", 5],
                     ["WEBSITE_ADD", `List ${a.name} on the AFC website`, "regulatory", admin, "admin", 5],
                     ["COMMISSION_REPORT", `Record commission and bonus for ${a.name} and report to Accounts`, "general", marketing, "marketing_officer", 5],
                     ["INDUCTION", `Induct ${a.name} and record staff training`, "general", marketing, "marketing_officer", 30]];

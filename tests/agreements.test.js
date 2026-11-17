@@ -284,17 +284,19 @@ test("renewal: a new agreement replaces the old one when approved", async () => 
   id = id2;
 });
 
-test("reminders: unsigned agreements nudge the agent every 3 days, then stop at 5", async () => {
+test("reminders: unsigned agreements nudge the agent after 5 days, then every 5 days up to 5", async () => {
   const sent = await send({ agent_id: (await pool.query("SELECT id FROM users WHERE email='agent2@x.com'")).rows[0].id });
   const id3 = sent.body.data.id;
   outbox.length = 0;
   assert.equal((await reminders.run()).agent, 0); // too soon
   await pool.query("UPDATE agreements SET sent_at = now() - interval '4 days' WHERE id=$1", [id3]);
+  assert.equal((await reminders.run()).agent, 0); // 4 days is not enough
+  await pool.query("UPDATE agreements SET sent_at = now() - interval '6 days' WHERE id=$1", [id3]);
   assert.equal((await reminders.run()).agent, 1);
   assert.ok(lastMail("agent2@x.com", /reminder/i));
   assert.equal((await reminders.run()).agent, 0); // not again right away
   for (let i = 0; i < 6; i++) {
-    await pool.query("UPDATE agreements SET last_reminder_at = now() - interval '4 days' WHERE id=$1", [id3]);
+    await pool.query("UPDATE agreements SET last_reminder_at = now() - interval '6 days' WHERE id=$1", [id3]);
     await reminders.run();
   }
   const row = (await pool.query("SELECT reminder_count FROM agreements WHERE id=$1", [id3])).rows[0];

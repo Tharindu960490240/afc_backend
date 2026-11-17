@@ -1,6 +1,6 @@
 const { query } = require("../config/db");
 
-const PUBLIC_COLUMNS = `id, email, first_name, last_name, phone, role, status, profile_image, last_login_at, created_at`;
+const PUBLIC_COLUMNS = `id, email, first_name, last_name, phone, role, status, profile_image, last_login_at, created_at, is_authorised_staff`;
 
 const findByEmail = async (email) =>
   (await query("SELECT * FROM users WHERE lower(email) = lower($1)", [email])).rows[0];
@@ -51,6 +51,9 @@ const setStatus = async (id, status) =>
     )
   ).rows[0];
 
+const setAuthorised = async (id, value) =>
+  (await query(`UPDATE users SET is_authorised_staff = $2, updated_at = now() WHERE id = $1 RETURNING ${PUBLIC_COLUMNS}`, [id, value])).rows[0];
+
 const updateProfile = async (id, { firstName, lastName, phone }) =>
   (
     await query(
@@ -85,6 +88,7 @@ const countActiveAdmins = async () =>
   Number((await query("SELECT COUNT(*) FROM users WHERE role='admin' AND status='active'")).rows[0].count);
 
 module.exports = {
+  setAuthorised,
   findByEmail, findById, emailExists, create, registerFailedLogin, registerSuccessfulLogin,
   setPassword, setStatus, updateProfile, list, countActiveAdmins, PUBLIC_COLUMNS,
 };

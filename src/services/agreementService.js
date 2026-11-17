@@ -47,8 +47,13 @@ const signatureFrom = (body, ctx, extra = {}) => ({
 async function send(actor, body, ctx) {
   const agent = (
     await query(
-      `SELECT u.id, u.first_name, u.last_name, u.email, u.status, ap.agency_name, ap.business_number, ap.country
+      `SELECT u.id, u.first_name, u.last_name, u.email, u.status, ap.agency_name, ap.business_number, ap.country,
+              g.trading_names[1] AS trading_name,
+              COALESCE(g.principal_address, g.registered_office_address, g.postal_address) AS address,
+              g.phone, CASE WHEN p.role = 'director' THEN 'Director' ELSE 'Authorised representative' END AS position
        FROM users u LEFT JOIN agent_profiles ap ON ap.user_id = u.id
+       LEFT JOIN agent_persons p ON p.portal_user_id = u.id AND p.deleted_at IS NULL
+       LEFT JOIN agents g ON g.id = p.agent_id
        WHERE u.id=$1 AND u.role='agent'`,
       [body.agent_id],
     )
@@ -136,6 +141,8 @@ async function approve(actor, id, body, ctx) {
 
   let storedKey = null;
   let certKey = null;
+  let finalPdf = null;
+  let certPdf = null;
   try {
     await withTransaction(async (client) => {
       const row = await repo.lockById(client, id);
@@ -145,6 +152,7 @@ async function approve(actor, id, body, ctx) {
       // draw the finished document from what is now in the database
       const full = await repo.findForDocument(id, client);
       const pdf = await agreementPdf.render(full);
+      finalPdf = pdf;
       const saved = await storage.save(pdf, "pdf");
       storedKey = saved.key;
       await repo.addFile(client, {
@@ -154,6 +162,7 @@ async function approve(actor, id, body, ctx) {
 
       // certificate of appointment (E1-5), stored next to the signed agreement
       const cert = await certificatePdf.render(await repo.findForDocument(id, client));
+      certPdf = cert;
       const certSaved = await storage.save(cert, "pdf");
       certKey = certSaved.key;
       await repo.addFile(client, {
@@ -173,7 +182,19 @@ async function approve(actor, id, body, ctx) {
   // E1-6: the agent moves to Onboarding and the PRISMS, ASQAnet, website and induction tasks are created
   await require("./taskService").onAgreementCountersigned(id, actor, ctx)
     .catch((e) => console.error("onboarding tasks failed:", e.message));
-  email.sendAgreementApproved({ to: current.agent_email, firstName: current.agent_first_name, title: current.title, expiresAt: done.expires_at });
+  // the signed agreement and the Certificate of Appointment go to the agent now, and a copy to the countersigning staff member
+  const ref = docs.reference(id);
+  const safe = (n) => n.replace(/[\\/\r\n]/g, "_");
+  const files = [
+    { filename: safe(`${ref} ${current.title} - signed.pdf`), content: finalPdf },
+    { filename: safe(`${current.agency_name || fullName(current, "agent_")} - Certificate of Appointment.pdf`), content: certPdf },
+  ];
+  email.sendAgreementApproved({ to: current.agent_email, firstName: current.agent_first_name, title: current.title, expiresAt: done.expires_at, files });
+  await query(
+    `UPDATE agents SET certificate_sent_at = now() WHERE id = (SELECT agent_id FROM agent_persons WHERE portal_user_id = $1 AND deleted_at IS NULL LIMIT 1)`,
+    [current.agent_id]).catch(() => {});
+  const staff = (await query(`SELECT first_name, email FROM users WHERE id = $1`, [actor.id])).rows[0];
+  if (staff) email.sendSignedCopyToStaff({ to: staff.email, firstName: staff.first_name, agentName: fullName(current, "agent_"), title: current.title, files: [files[0]] });
   return done;
 }
 

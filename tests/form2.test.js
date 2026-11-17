@@ -212,24 +212,38 @@ test("procedure step 6: commission and bonus are recorded, sent to Accounts, and
   assert.equal(blocked.status, 400);
   assert.match(JSON.stringify(blocked.body.errors), /commission/i);
 
-  assert.equal((await post(`/api/coms/agents/${A}/terms`, "coe", { commission_terms: "10%" })).status, 403);
-  assert.equal((await post(`/api/coms/agents/${A}/terms`, "marketing", { commission_terms: "" })).status, 400);
+  assert.equal((await post(`/api/coms/agents/${A}/terms`, "coe", { vet_percent: 35, elicos_percent: 30 })).status, 403);
+  assert.equal((await post(`/api/coms/agents/${A}/terms`, "marketing", { vet_percent: 150 })).status, 400);
+  assert.equal((await get(`/api/coms/agents/${A}/terms/draft`, "marketing")).status, 409, "nothing recorded yet");
   outbox.length = 0;
-  const ok = await post(`/api/coms/agents/${A}/terms`, "marketing", { commission_terms: "10% of tuition for each enrolled student", bonus_terms: "$500 for 10 enrolments in a year" });
-  assert.equal(ok.status, 200);
-  assert.equal(ok.body.data.commission_terms, "10% of tuition for each enrolled student");
-  assert.equal(ok.body.data.accounts_notified, 1);
-  const mail = mails("accounts@afc.test", /commission and bonus/i)[0];
+  // defaults are the Schedule 1 rates; recording does not email anyone
+  const ok = await post(`/api/coms/agents/${A}/terms`, "marketing", { bonus_terms: "$500 for 10 enrolments in a year" });
+  assert.equal(ok.status, 200, JSON.stringify(ok.body));
+  assert.equal(Number(ok.body.data.commission_vet_pct), 35);
+  assert.equal(Number(ok.body.data.commission_elicos_pct), 30);
+  assert.match(ok.body.data.commission_terms, /VET courses: 35%.*ELICOS courses: 30%/);
+  assert.equal(outbox.filter((m) => m.to === "accounts@afc.test").length, 0, "staff review the draft first");
+  const draft = ok.body.data.draft;
+  assert.equal(draft.to[0].email, "accounts@afc.test");
+  assert.match(draft.body, /VET courses: 35%/);
+  assert.match(draft.body, /\$500/);
+  let task = (await get(`/api/coms/tasks?agent_id=${A}&status=all`, "director")).body.data.find((x) => x.type === "COMMISSION_REPORT");
+  assert.equal(task.status, "open", "saving alone does not finish the task");
+
+  // the officer edits the wording and sends it
+  assert.equal((await post(`/api/coms/agents/${A}/terms/send`, "coe", { subject: "Commission", body: "Please add this agent." })).status, 403);
+  const sent = await post(`/api/coms/agents/${A}/terms/send`, "marketing", { subject: draft.subject, body: `${draft.body}\n\nPlease confirm when done.` });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.equal(sent.body.data.accounts_notified, 1);
+  const mail = mails("accounts@afc.test", /new agent commission/i)[0];
   assert.ok(mail);
-  assert.match(mail.text, /10% of tuition/);
-  assert.match(mail.text, /\$500/);
-  const task = (await get(`/api/coms/tasks?agent_id=${A}&status=all`, "director")).body.data.find((x) => x.type === "COMMISSION_REPORT");
-  assert.equal(task.status, "done", "recording the terms finishes the task");
-  const log = (await audits("agent.terms_recorded"))[0];
-  assert.equal(log.before.commission_terms, null);
-  assert.equal(log.after.commission_terms, "10% of tuition for each enrolled student");
+  assert.match(mail.text, /Please confirm when done/);
+  task = (await get(`/api/coms/tasks?agent_id=${A}&status=all`, "director")).body.data.find((x) => x.type === "COMMISSION_REPORT");
+  assert.equal(task.status, "done", "sending the email finishes the task");
+  assert.equal((await audits("agent.terms_sent")).length, 1);
+  assert.equal((await audits("agent.terms_recorded"))[0].before.commission_terms, null);
 
   // an agent still being assessed has no terms yet
   const other = await applied("Gamma Education", "owner@gamma.in");
-  assert.equal((await post(`/api/coms/agents/${other}/terms`, "marketing", { commission_terms: "10%" })).status, 409);
+  assert.equal((await post(`/api/coms/agents/${other}/terms`, "marketing", { vet_percent: 35, elicos_percent: 30 })).status, 409);
 });

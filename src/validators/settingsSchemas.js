@@ -25,7 +25,7 @@ const saveDocTypes = z.object({ items: z.array(docTypeItem).min(1).max(30) }).st
 const int = (min, max) => z.number().int().min(min).max(max);
 const saveTimers = z.object({
   ack_days: int(1, 30), decision_days: int(1, 60), amber_after_days: int(1, 60),
-  referee_link_days: int(1, 90), referee_reminder_days: int(1, 30), referee_max_reminders: int(0, 10),
+  referee_link_days: int(1, 90), referee_reminder_days: int(1, 30), referee_max_reminders: int(0, 10), task_escalation_days: int(1, 30),
 }).strict();
 
 const optional = (max) => z.string().trim().max(max).optional();
@@ -43,7 +43,6 @@ const taskItem = z.object({
   owner_role: z.string().trim().max(30),
   due_days: int(1, 120),
   due_basis: z.enum(["business", "calendar"]),
-  legal_days: int(1, 365).nullable().optional(),
   prefer_account_manager: z.boolean(),
   enabled: z.boolean(),
 }).strict();

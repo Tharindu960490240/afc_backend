@@ -183,3 +183,16 @@ Run `npm run migrate` (migration 010). **Settings** in the admin menu (`/admin/s
 - **Onboarding tasks:** name, owner role, due days (working or calendar), legal backstop, enabled (PRISMS and Induction must stay on, because an agent cannot become Active without them).
 - **College and certificate:** name, ABN, RTO, CRICOS, contact details, campuses, certificate signatory and signature image. These replace the standard values in emails, PDFs and the certificate; empty fields keep the standard value.
 Changes are saved in the database, recorded in the audit log (before/after), and take effect within seconds. The built-in values remain the defaults. Note: `TRUNCATE users CASCADE` also empties these tables (tests restore them); `npm run reset:data` keeps them.
+
+## Phase 1 and 2 update (AFC Agent Management Developer Requirements)
+
+Run `npm run migrate` (adds 011, 012, 013).
+
+- **Referees**: one positive reference is enough; the "two recommended" warning is gone.
+- **Agreement**: pre-fills trading name, address, representative name and position, phone and the agreement date. The sample wording carries Schedule 1 (35% VET, 30% ELICOS), a 1-year term and no sub-contracting. Migration 011 only rewrites the wording if it is still the unedited version 1.
+- **Signing**: reminder after 5 unsigned days (then every 5, up to 5). At counter-sign the agent gets one email with the signed agreement and the Certificate of Appointment; the countersigning staff member gets a copy. The certificate can be downloaded from counter-sign. Nothing extra is sent when the agent becomes Active.
+- **Registration tasks (5 working days)**: PRISMS to compliance, ASQAnet to the CEO, website to administration (with the listing details in the task). Escalated to a manager on working day 4 (Settings > Deadlines). After the deadline only a manager can close them. The old 30-day ASQAnet backstop is removed.
+- **Commission**: staff record the VET/ELICOS percentages (defaults 35/30). The system drafts the email to Accounts; staff check it and send. Sending completes the task. Endpoints: `POST /coms/agents/:id/terms`, `GET .../terms/draft`, `POST .../terms/send`.
+- **Authorised staff**: `PATCH /users/:id/authorised` (CEO or administrator); toggle on the Users screen.
+- **Termination**: login is blocked at once, sessions end, and PRISMS_REMOVE (compliance), ASQANET_END (CEO) and WEBSITE_REMOVE (admin) tasks are created. A terminated agent's access cannot be switched back on. Records are only ever soft-deleted.
+- **Removed screens**: Registrations, the old Agents list and detail page, and the "Soon" Leads and Renewals menu items.

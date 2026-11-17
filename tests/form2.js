@@ -24,6 +24,8 @@ async function restoreSettings(pool) {
   const seed = sql.slice(sql.indexOf("INSERT INTO reference_questions"));
   await pool.query("TRUNCATE reference_questions, document_types, onboarding_task_templates, settings RESTART IDENTITY");
   await pool.query(seed);
+  await pool.query("UPDATE onboarding_task_templates SET owner_role='compliance' WHERE type='PRISMS_ADD'");
+  await pool.query("UPDATE onboarding_task_templates SET owner_role='ceo', legal_days=NULL WHERE type='ASQANET_START'");
 }
 
 module.exports = { EXTRA, v2, needsV2 };
@@ -52,4 +54,6 @@ module.exports.restoreSettings = async (pool) => {
   const sql = require("fs").readFileSync(require("path").join(__dirname, "..", "migrations", "010_settings.sql"), "utf8");
   await pool.query("TRUNCATE reference_questions, document_types, onboarding_task_templates, settings RESTART IDENTITY");
   await pool.query(sql.slice(sql.indexOf("INSERT INTO reference_questions")));
+  await pool.query("UPDATE onboarding_task_templates SET owner_role='compliance' WHERE type='PRISMS_ADD'");
+  await pool.query("UPDATE onboarding_task_templates SET owner_role='ceo', legal_days=NULL WHERE type='ASQANET_START'");
 };

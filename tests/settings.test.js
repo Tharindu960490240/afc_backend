@@ -158,7 +158,7 @@ test("document types: a new required document gates approval; the rules protect 
 });
 
 test("timers change the deadlines and the amber warning", async () => {
-  const body = { ack_days: 2, decision_days: 5, amber_after_days: 3, referee_link_days: 14, referee_reminder_days: 2, referee_max_reminders: 1 };
+  const body = { ack_days: 2, decision_days: 5, amber_after_days: 3, referee_link_days: 14, referee_reminder_days: 2, referee_max_reminders: 1, task_escalation_days: 4 };
   assert.equal((await put("/api/settings/timers", "admin", { ...body, amber_after_days: 9 })).status, 400, "amber cannot be after the deadline");
   assert.equal((await put("/api/settings/timers", "admin", { ...body, decision_days: 0 })).status, 400);
   assert.equal((await put("/api/settings/timers", "admin", body)).status, 200);
@@ -223,7 +223,8 @@ test("onboarding tasks follow the template; required ones cannot be switched off
     assert.equal(web.title, "Publish Settings Edu on the website");
     assert.equal(web.owner_role, "marketing_officer");
     assert.equal(web.due_date, await calendar.addBusinessDays(calendar.localDate(), 2));
-    assert.ok(rows.find((r) => r.type === "ASQANET_START").legal_deadline);
+    assert.equal(rows.find((r) => r.type === "ASQANET_START").legal_deadline, null);
+    assert.equal(rows.find((r) => r.type === "ASQANET_START").owner_role, "ceo");
     await client.query("ROLLBACK");
   } finally { client.release(); }
   // put things back
