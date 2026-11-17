@@ -10,5 +10,6 @@ router.use("/agreements", require("./agreementRoutes"));
 router.use("/agent-application", require("./agentApplicationRoutes"));
 router.use("/coms", require("./comsRoutes"));
 router.use("/reference", require("./referenceRoutes"));
+router.use("/settings", require("./settingsRoutes"));
 router.use("/jobs", require("./jobsRoutes"));
 module.exports = router;

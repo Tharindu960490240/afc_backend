@@ -41,6 +41,7 @@ const status = async (email) => (await pool.query("SELECT status FROM users WHER
 
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   const hash = await hashPassword(PW);
   await pool.query(`INSERT INTO users (email,password_hash,first_name,last_name,role) VALUES ('admin@afc.test',$1,'Ada','Test','admin')`, [hash]);
   await pool.query(`INSERT INTO users (email,password_hash,first_name,last_name,role) VALUES ('old@agent.com',$1,'Old','Agent','agent')`, [hash]);

@@ -9,6 +9,16 @@ const AppError = require("../utils/AppError");
 const env = require("../config/env");
 const { withTransaction } = require("../config/db");
 const { ROLES, STAFF_ROLES, TASK_TYPES, TASK_MANAGERS } = require("../const");
+const settings = require("./settingsService");
+
+// used only until the Settings tables exist
+const DEFAULT_ONBOARDING = [
+  { type: "PRISMS_ADD", title: "Add {agent} to PRISMS", owner_role: ROLES.COE_ADMIN, due_days: 5, due_basis: "business", legal_days: null },
+  { type: "ASQANET_START", title: "Report {agent} to ASQAnet", owner_role: ROLES.COE_ADMIN, due_days: 5, due_basis: "business", legal_days: 30 },
+  { type: "WEBSITE_ADD", title: "List {agent} on the AFC website", owner_role: ROLES.ADMIN, due_days: 5, due_basis: "business", legal_days: null },
+  { type: "COMMISSION_REPORT", title: "Record commission and bonus for {agent} and report to Accounts", owner_role: ROLES.MARKETING, due_days: 5, due_basis: "business", legal_days: null },
+  { type: "INDUCTION", title: "Induct {agent} and record staff training", owner_role: ROLES.MARKETING, due_days: 30, due_basis: "calendar", legal_days: null, prefer_account_manager: true },
+];
 const { parseUpload } = require("../utils/upload");
 const { toCsv } = require("../utils/csv");
 const repo = require("../repositories/taskRepo");
@@ -24,9 +34,9 @@ const fieldError = (field, message) => new AppError(400, "Please check the highl
 const isManager = (actor) => TASK_MANAGERS.includes(actor.role);
 
 // who may finish a task: its owner, the role the task type belongs to, or management
+const roleFor = (type) => settings.taskTemplates().find((x) => x.type === type)?.owner_role || TASK_TYPES[type]?.ownerRole;
 const canWork = (actor, t) =>
-  t.owner_id === actor.id || isManager(actor) || actor.role === ROLES.COE_ADMIN && TASK_TYPES[t.type]?.ownerRole === ROLES.COE_ADMIN
-  || actor.role === ROLES.MARKETING && TASK_TYPES[t.type]?.ownerRole === ROLES.MARKETING;
+  t.owner_id === actor.id || isManager(actor) || actor.role === (t.owner_role || roleFor(t.type));
 
 const withFlags = async (rows) => {
   const today = calendar.localDate();
@@ -86,21 +96,14 @@ async function notifyAssigned(ownerId, taskId) {
 async function createOnboardingTasks(client, { agent, agreement, actorId }) {
   const start = agreement.effective_date;                         // agreement start (YYYY-MM-DD)
   const today = calendar.localDate();
-  const prisms = await calendar.addBusinessDays(today, 5);        // PRISMS: 5 working days
-  const web = await calendar.addBusinessDays(today, 5);           // website: 5 days (working days)
-  // Processing Agent Application, step 6: website, ASQAnet and PRISMS within 5 days of signing
-  const asqa = await calendar.addBusinessDays(today, 5);
-  const asqaLegal = calendar.addDays(start, 30);                  // ESOS reporting backstop (BR-09): alert at day 20, escalate at day 25
-  const commission = await calendar.addBusinessDays(today, 5);    // report commission and bonus to Accounts
-  const induction = calendar.addDays(today, 30);                  // induction: 30 days after approval (proposed)
   const manager = agent.account_manager_id;
-  const spec = [
-    ["PRISMS_ADD", `Add ${agent.legal_name} to PRISMS`, prisms, "business", null, ROLES.COE_ADMIN, null],
-    ["ASQANET_START", `Report ${agent.legal_name} to ASQAnet`, asqa, "business", asqaLegal, ROLES.COE_ADMIN, null],
-    ["WEBSITE_ADD", `List ${agent.legal_name} on the AFC website`, web, "business", null, ROLES.ADMIN, null],
-    ["COMMISSION_REPORT", `Record commission and bonus for ${agent.legal_name} and report to Accounts`, commission, "business", null, ROLES.MARKETING, null],
-    ["INDUCTION", `Induct ${agent.legal_name} and record staff training`, induction, "calendar", null, ROLES.MARKETING, manager],
-  ];
+  // what to create comes from Settings (Onboarding tasks), falling back to the built-in list
+  const templates = settings.taskTemplates().filter((t) => t.enabled);
+  const spec = [];
+  for (const t of templates.length ? templates : DEFAULT_ONBOARDING) {
+    const due = t.due_basis === "calendar" ? calendar.addDays(today, t.due_days) : await calendar.addBusinessDays(today, t.due_days);
+    spec.push([t.type, String(t.title).replace(/\{agent\}/g, agent.legal_name), due, t.due_basis, t.legal_days ? calendar.addDays(start, t.legal_days) : null, t.owner_role, t.prefer_account_manager ? manager : null]);
+  }
   const created = [];
   for (const [type, title, due, basis, legal, role, prefer] of spec) {
     const ownerId = await repo.ownerFor(role, prefer);

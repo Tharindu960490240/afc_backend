@@ -7,7 +7,8 @@
 const AppError = require("../utils/AppError");
 const env = require("../config/env");
 const { withTransaction } = require("../config/db");
-const { AGENT_PERMS, REFERENCE_QUESTIONS } = require("../const");
+const { AGENT_PERMS } = require("../const");
+const settings = require("./settingsService");
 const { generateToken, hashToken } = require("../utils/tokens");
 const { parseUpload } = require("../utils/upload");
 const { changes } = require("../utils/diff");
@@ -21,7 +22,6 @@ const email = require("./emailService");
 const { prismsMissing } = require("./prisms");
 
 const ENTITY = "agent";
-const REF_TTL_DAYS = 21;
 const BAD_LINK = "This link is not valid any more. Please contact the college.";
 
 const allowed = (actor, perm) => AGENT_PERMS[perm].includes(actor.role);
@@ -50,10 +50,10 @@ async function saveFile(client, file, kind, actorId) {
 }
 
 // ---------- answers to the reference questions ----------
-function checkAnswers(raw) {
+function checkAnswers(raw, questions = settings.questions()) {
   const clean = {};
   const errors = {};
-  for (const q of REFERENCE_QUESTIONS) {
+  for (const q of questions) {
     const v = raw[q.key];
     if (q.type === "yesno") {
       if (typeof v !== "boolean") { if (q.required) errors[q.key] = "Please choose Yes or No"; continue; }
@@ -73,8 +73,8 @@ function checkAnswers(raw) {
   return clean;
 }
 // a good reference = every question that has a favourable answer got it
-const outcomeFor = (answers) =>
-  REFERENCE_QUESTIONS.filter((q) => "favourable" in q).every((q) => answers[q.key] === q.favourable) ? "positive" : "negative";
+const outcomeFor = (answers, questions = settings.questions()) =>
+  questions.filter((q) => q.favourable !== undefined && q.favourable !== null).every((q) => answers[q.key] === q.favourable) ? "positive" : "negative";
 
 // ---------- the checklist (E1-4) ----------
 function buildChecklist(a, dd, referees, checks, persons, docState) {
@@ -124,7 +124,7 @@ async function get(actor, agentId) {
     require("./agentDocumentService").checklistState(agentId),
   ]);
   const base = {
-    questions: REFERENCE_QUESTIONS,
+    questions: settings.questions(),
     referees: referees.map((r) => ({ ...r, checks: checks.filter((c) => c.referee_id === r.id) })),
     permissions: { record: allowed(actor, "dueDiligence"), decide: allowed(actor, "decide") },
   };
@@ -196,7 +196,7 @@ async function removeReferee(actor, agentId, refereeId, reason, ctx) {
 
 // ---------- referee verification ----------
 const linkFor = (token) => `${env.frontendUrl}/reference/${token}`;
-const expiry = () => new Date(Date.now() + REF_TTL_DAYS * 24 * 3600 * 1000);
+const expiry = () => new Date(Date.now() + settings.timers().referee_link_days * 24 * 3600 * 1000);
 
 // E1-4: the officer sends the online form to a referee
 async function sendReferenceRequest(actor, agentId, refereeId, ctx) {
@@ -241,8 +241,9 @@ async function recordPhoneCheck(actor, agentId, refereeId, body, ctx) {
   const ref = await repo.findReferee(agentId, refereeId);
   if (!ref) throw new AppError(404, "Referee not found.");
   if (body.call_date > calendar.localDate()) throw fieldError("call_date", "The call date cannot be in the future");
-  const answers = checkAnswers(body.answers);
-  const outcome = body.outcome || outcomeFor(answers);
+  const asked = settings.questions();
+  const answers = checkAnswers(body.answers, asked);
+  const outcome = body.outcome || outcomeFor(answers, asked);
   let fileKey = null;
   try {
     await withTransaction(async (client) => {
@@ -252,7 +253,7 @@ async function recordPhoneCheck(actor, agentId, refereeId, body, ctx) {
       if (body.file) { const f = await saveFile(client, body.file, "referee", actor.id); fileId = f.id; fileKey = f.key; }
       await repo.insertCheck(client, {
         agentId, refereeId, method: "phone", callDate: body.call_date, spokeTo: body.spoke_to, responseAt: new Date(),
-        answers, outcome, outcomeBy: actor.id, summary: body.summary, fileId, actorId: actor.id, sentAt: null,
+        answers, questions: asked, outcome, outcomeBy: actor.id, summary: body.summary, fileId, actorId: actor.id, sentAt: null,
       });
       await audit.log({ actorId: actor.id, action: "agent.reference_phone_recorded", entityType: ENTITY, entityId: agentId, after: { referee: ref.name, call_date: body.call_date, outcome }, ...ctx }, client);
     });
@@ -290,20 +291,21 @@ async function referenceForm(token) {
   if (new Date(row.token_expires_at) < new Date()) throw new AppError(410, BAD_LINK);
   return {
     submitted: false, agent_name: row.agent_name, referee_name: row.referee_name, organisation: row.organisation,
-    questions: REFERENCE_QUESTIONS.map(({ key, type, label, required, detail, favourable }) => ({ key, type, label, required, detail: !!detail, detail_when: detail ? !favourable : undefined })),
+    questions: settings.questions().map(({ key, type, label, required, detail, favourable }) => ({ key, type, label, required, detail: !!detail, detail_when: detail ? !favourable : undefined })),
   };
 }
 
 async function submitReference(token, rawAnswers, ctx) {
   const hash = hashToken(token);
-  const answers = checkAnswers(rawAnswers);
-  const outcome = outcomeFor(answers);
+  const asked = settings.questions();
+  const answers = checkAnswers(rawAnswers, asked);
+  const outcome = outcomeFor(answers, asked);
   const row = await withTransaction(async (client) => {
     const r = await repo.findByToken(hash, client);
     if (!r || !IN_REVIEW.includes(r.agent_status)) throw new AppError(404, BAD_LINK);
     if (r.response_at) throw new AppError(409, "This form has already been submitted. Thank you.");
     if (new Date(r.token_expires_at) < new Date()) throw new AppError(410, BAD_LINK);
-    await repo.saveResponse(client, r.id, answers, outcome);
+    await repo.saveResponse(client, r.id, answers, outcome, asked);
     await audit.log({ actorId: null, action: "agent.reference_received", entityType: ENTITY, entityId: r.agent_id, after: { referee: r.referee_name, organisation: r.organisation, outcome }, ip: ctx?.ip, userAgent: ctx?.userAgent }, client);
     return r;
   });

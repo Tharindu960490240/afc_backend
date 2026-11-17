@@ -1,6 +1,6 @@
 const { z } = require("zod");
 const { validAbnOrAcn } = require("../utils/abn");
-const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, TASK_TYPE_LIST, DOC_KINDS } = require("../const");
+const { ROLE_LIST, STAFF_ROLES, PASSWORD_REGEX, AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, TASK_TYPE_LIST } = require("../const");
 
 const email = z.string().trim().toLowerCase().email().max(254);
 const name = z.string().trim().min(1).max(50).regex(/^[\p{L}][\p{L}\s'’.-]*$/u, "Invalid characters");
@@ -322,7 +322,7 @@ const createReferee = z.object(refereeBody).strict();
 const updateReferee = z.object(refereeBody).partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to update");
 const refereeParams = z.object({ id: z.string().uuid(), refereeId: z.string().uuid() });
 const checkParams = z.object({ id: z.string().uuid(), checkId: z.string().uuid() });
-const answers = z.record(z.string().max(40), z.union([z.string().trim().max(2000), z.boolean()]));
+const answers = z.record(z.string().max(70), z.union([z.string().trim().max(2000), z.boolean()]));
 const phoneCheck = z.object({
   call_date: dateOnly,
   spoke_to: z.string().trim().min(2).max(160),
@@ -400,7 +400,7 @@ const auditQuery = z.object({
 // agent folder: documents, requests for information, commission and bonus (Part 2b)
 const uploadFile = z.object({ name: z.string().trim().min(1).max(255), data: z.string().min(10) }).strict();
 const agentDocument = z.object({
-  kind: z.enum(Object.keys(DOC_KINDS)),
+  kind: z.string().trim().min(1).max(60), // checked against the document types in Settings
   label: z.string().trim().max(160).optional(),
   file: uploadFile,
 }).strict();

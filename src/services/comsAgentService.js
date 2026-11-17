@@ -3,6 +3,7 @@
 // One record per agent organisation, with its people, status history and SLA clock.
 // ===============================
 const AppError = require("../utils/AppError");
+const settings = require("./settingsService");
 const { withTransaction } = require("../config/db");
 const {
   AGENT_PERMS, AGENT_TRANSITIONS, STAFF_ROLES, ROLES,
@@ -52,7 +53,8 @@ async function slaFor(a) {
   const decided = DECIDED.includes(a.status);
   const ackState = a.ack_sent_at ? "done" : a.ack_due_date && today > a.ack_due_date ? "overdue" : "due";
   let decisionState = "done";
-  if (!decided) decisionState = elapsed >= 10 ? "red" : elapsed >= 7 ? "amber" : "ok";
+  const t = settings.timers();
+  if (!decided) decisionState = elapsed >= t.decision_days ? "red" : elapsed >= t.amber_after_days ? "amber" : "ok";
   return {
     received_on: received,
     working_days_elapsed: elapsed,
@@ -275,8 +277,8 @@ async function startClock(id, client) {
   const run = async (c) => {
     await repo.setSla(c, id, {
       receivedAt: new Date(),
-      ackDue: await calendar.addBusinessDays(today, 3),
-      decisionDue: await calendar.addBusinessDays(today, 10),
+      ackDue: await calendar.addBusinessDays(today, settings.timers().ack_days),
+      decisionDue: await calendar.addBusinessDays(today, settings.timers().decision_days),
     });
   };
   if (client) return run(client);

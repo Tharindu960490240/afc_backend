@@ -49,6 +49,7 @@ let A;
 
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   const hash = await hashPassword(PW);
   for (const [name, role] of [["admin", "admin"], ["marketing", "marketing_officer"], ["director", "director"], ["accounts", "accounts"], ["coe", "coe_admin"]]) {
     await pool.query(`INSERT INTO users (email,password_hash,first_name,last_name,role) VALUES ($1,$2,$3,'Test',$4)`, [`${name}@afc.test`, hash, name[0].toUpperCase() + name.slice(1), role]);

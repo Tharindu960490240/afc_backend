@@ -26,6 +26,7 @@ const signIn = async (email, password) => (await call("POST", "/api/auth/login",
 
 before(async () => {
   await pool.query("TRUNCATE audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   await pool.query(
     `INSERT INTO users (email, password_hash, first_name, last_name, role) VALUES ($1,$2,'Ada','Admin','admin')`,
     [ADMIN.email, await hashPassword(ADMIN.password)],

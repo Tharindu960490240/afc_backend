@@ -4,6 +4,7 @@ const path = require("path");
 const PDFDocument = require("pdfkit");
 const college = require("../emails/college");
 const doc = require("./agreementDocument");
+const settings = require("./settingsService");
 
 const ASSETS = path.join(__dirname, "..", "emails", "assets");
 const FONT = path.join(__dirname, "..", "assets", "fonts", "Anton-Regular.woff");
@@ -58,7 +59,7 @@ function render(a) {
 
       // signature block
       const signer = college.signer || {};
-      try { pdf.image(SIGNATURE, 112, 618, { width: 100 }); } catch { /* optional */ }
+      try { pdf.image(settings.signatureImage() || SIGNATURE, 112, 618, { fit: [100, 44] }); } catch { /* optional */ }
       pdf.rect(70, 660, 89, 2.5).fill(NAVY);
       pdf.rect(159, 660, 89, 2.5).fill(RED);
       pdf.font(bold).fontSize(16.5).fillColor(INK).text(clean(signer.name) || "Authorised representative", 70, 670, { width: 178, align: "center", characterSpacing: 3 });

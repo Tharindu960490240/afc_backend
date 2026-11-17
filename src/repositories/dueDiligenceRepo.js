@@ -78,7 +78,7 @@ const softDeleteReferee = (client, id, reason, actorId) =>
 
 // ---------- referee checks ----------
 const CHECK_COLS = `c.id, c.agent_id, c.referee_id, c.method, c.sent_at, c.sent_by, c.reminder_count, c.last_reminder_at,
-  c.call_date, c.spoke_to, c.response_at, c.answers, c.outcome, c.outcome_by, c.summary, c.created_at,
+  c.call_date, c.spoke_to, c.response_at, c.answers, c.questions, c.outcome, c.outcome_by, c.summary, c.created_at,
   c.token_expires_at, ${fileInfo("c.file_id")} AS file,
   trim(coalesce(s.first_name,'') || ' ' || coalesce(s.last_name,'')) AS sent_by_name`;
 
@@ -95,11 +95,11 @@ const findCheck = async (agentId, checkId, client) =>
 const insertCheck = async (client, c) =>
   (await client.query(
     `INSERT INTO referee_checks (agent_id, referee_id, method, token_hash, token_expires_at, sent_at, sent_by,
-       call_date, spoke_to, response_at, answers, outcome, outcome_by, summary, file_id, created_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$7) RETURNING id`,
+       call_date, spoke_to, response_at, answers, outcome, outcome_by, summary, file_id, created_by, questions)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$7,$16) RETURNING id`,
     [c.agentId, c.refereeId, c.method, c.tokenHash || null, c.tokenExpires || null, c.sentAt || null, c.actorId || null,
      c.callDate || null, c.spokeTo || null, c.responseAt || null, c.answers ? JSON.stringify(c.answers) : null,
-     c.outcome || "pending", c.outcomeBy || null, c.summary || null, c.fileId || null])).rows[0].id;
+     c.outcome || "pending", c.outcomeBy || null, c.summary || null, c.fileId || null, c.questions ? JSON.stringify(c.questions) : null])).rows[0].id;
 
 const pendingEmailCheck = async (refereeId, client) =>
   (await q(client).query(
@@ -124,10 +124,10 @@ const findByToken = async (hash, client) =>
      FROM referee_checks c JOIN agent_referees r ON r.id = c.referee_id JOIN agents a ON a.id = c.agent_id
      WHERE c.token_hash = $1 AND c.method = 'email_form' AND c.deleted_at IS NULL AND a.deleted_at IS NULL`, [hash])).rows[0];
 
-const saveResponse = (client, checkId, answersJson, outcome) =>
+const saveResponse = (client, checkId, answersJson, outcome, questions) =>
   client.query(
-    `UPDATE referee_checks SET answers = $2, response_at = now(), outcome = $3, token_hash = NULL, updated_at = now() WHERE id = $1`,
-    [checkId, JSON.stringify(answersJson), outcome]);
+    `UPDATE referee_checks SET answers = $2, response_at = now(), outcome = $3, questions = $4, token_hash = NULL, updated_at = now() WHERE id = $1`,
+    [checkId, JSON.stringify(answersJson), outcome, questions ? JSON.stringify(questions) : null]);
 
 // reminders: email checks waiting for an answer
 const awaitingReminder = async () =>

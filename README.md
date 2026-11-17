@@ -173,3 +173,13 @@ Run `npm run migrate` (migration 009). The certificate follows the college's des
 
 - `npm run reset:data` removes everything except administrator logins, the public-holiday calendar and the agreement template. It shows the database name and asks you to type it before deleting. It removes all other users, agents, agreements, tasks, invitations and the audit log (files in `uploads/` are not touched). There is no undo: take a database backup first.
 - `npm run seed:demo` then adds sample data for every screen built so far: 7 staff logins (one per role), 9 agents at every stage (prospect to active, rejected), application answers, documents, referees, due diligence, agreements (one sent, two countersigned), a certificate, tasks, history and audit entries. All demo logins use `Passw0rd@1` (change with `DEMO_PASSWORD`). Remove again with `npm run seed:demo -- --remove`.
+
+## Settings (administrators)
+
+Run `npm run migrate` (migration 010). **Settings** in the admin menu (`/admin/settings`, `/api/settings`, administrators only) lets the college change, without a code change:
+- **Reference questions:** add, reword, reorder, switch off; mark the "good answer" and whether to ask for details. Each completed check keeps the questions it was answered against, so later edits never rewrite history. Questions cannot be deleted.
+- **Documents:** names, short file names, which must be accepted before approval, new types.
+- **Deadlines:** acknowledge days (3), decision days (10), amber from day (7), referee link validity (21), reminder frequency and count.
+- **Onboarding tasks:** name, owner role, due days (working or calendar), legal backstop, enabled (PRISMS and Induction must stay on, because an agent cannot become Active without them).
+- **College and certificate:** name, ABN, RTO, CRICOS, contact details, campuses, certificate signatory and signature image. These replace the standard values in emails, PDFs and the certificate; empty fields keep the standard value.
+Changes are saved in the database, recorded in the audit log (before/after), and take effect within seconds. The built-in values remain the defaults. Note: `TRUNCATE users CASCADE` also empties these tables (tests restore them); `npm run reset:data` keeps them.

@@ -18,6 +18,14 @@ function v2(body) {
   return { ...EXTRA, ...body, referees: body.referees.map((r) => ({ position: "Director", ...r })) };
 }
 const needsV2 = (method, url) => method === "POST" && (/\/api\/auth\/register-agent$/.test(url) || /\/api\/agent-application$/.test(url));
+// TRUNCATE users CASCADE in the test set-up also empties the settings tables: put the standard rows back
+async function restoreSettings(pool) {
+  const sql = require("fs").readFileSync(require("path").join(__dirname, "..", "migrations", "010_settings.sql"), "utf8");
+  const seed = sql.slice(sql.indexOf("INSERT INTO reference_questions"));
+  await pool.query("TRUNCATE reference_questions, document_types, onboarding_task_templates, settings RESTART IDENTITY");
+  await pool.query(seed);
+}
+
 module.exports = { EXTRA, v2, needsV2 };
 
 // Before an approval, the required documents are put on file and accepted (the real flow does this through the screens).
@@ -38,3 +46,10 @@ async function acceptAllDocuments(pool) {
 }
 module.exports.acceptAllDocuments = acceptAllDocuments;
 module.exports.needsDocs = (method, url) => method === "POST" && /(\/decision|\/approve)$/.test(url);
+
+// TRUNCATE users CASCADE in the test set-up also empties the settings tables: put the standard rows back
+module.exports.restoreSettings = async (pool) => {
+  const sql = require("fs").readFileSync(require("path").join(__dirname, "..", "migrations", "010_settings.sql"), "utf8");
+  await pool.query("TRUNCATE reference_questions, document_types, onboarding_task_templates, settings RESTART IDENTITY");
+  await pool.query(sql.slice(sql.indexOf("INSERT INTO reference_questions")));
+};

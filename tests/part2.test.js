@@ -71,6 +71,7 @@ let A; // the main agent (Delta Education)
 
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   fs.rmSync(path.resolve(env.uploadDir, "coms"), { recursive: true, force: true });
   const hash = await hashPassword(PW);
   const staff = [

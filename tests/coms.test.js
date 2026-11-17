@@ -64,6 +64,7 @@ const appForm = (over = {}) => ({
 
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   const hash = await hashPassword(PW);
   const staff = [
     ["admin", "admin"], ["marketing", "marketing_officer"], ["director", "director"], ["ceo", "ceo"],

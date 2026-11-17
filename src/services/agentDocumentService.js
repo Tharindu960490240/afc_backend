@@ -5,7 +5,8 @@
 const AppError = require("../utils/AppError");
 const env = require("../config/env");
 const { withTransaction } = require("../config/db");
-const { AGENT_PERMS, DOC_KINDS, REQUIRED_DOC_KINDS } = require("../const");
+const { AGENT_PERMS } = require("../const");
+const settings = require("./settingsService");
 const { parseUpload } = require("../utils/upload");
 const repo = require("../repositories/agentDocRepo");
 const agentRepo = require("../repositories/comsAgentRepo");
@@ -29,9 +30,10 @@ async function loadAgent(id, client) {
 
 // One line per document kind that matters, so screens can show "received / accepted / missing".
 function summary(docs) {
-  const required = REQUIRED_DOC_KINDS.map((kind) => {
+  const kinds = settings.docKinds();
+  const required = settings.requiredDocKinds().map((kind) => {
     const d = docs.filter((x) => x.kind === kind).pop();
-    return { kind, label: DOC_KINDS[kind].label, status: d ? d.status : "missing" };
+    return { kind, label: kinds[kind].label, status: d ? d.status : "missing" };
   });
   const complete = required.every((r) => r.status === "accepted");
   return { required, complete };
@@ -43,10 +45,11 @@ async function list(actor, agentId) {
   need(actor, "read");
   const agent = await loadAgent(agentId);
   const docs = named(agent, await repo.list(agentId));
-  return { documents: docs, kinds: DOC_KINDS, ...summary(docs) };
+  return { documents: docs, kinds: settings.docKinds(), ...summary(docs) };
 }
 
 async function addDocument({ agent, actorId, byAgent, body, ctx }) {
+  if (!settings.docKinds()[body.kind]?.active) throw new AppError(400, "Please check the highlighted fields.", { errors: { kind: "Choose a document type from the list" } });
   const up = parseUpload(body.file);
   const saved = await storage.save(up.buffer, up.ext, "coms");
   const id = await withTransaction(async (client) => {
@@ -78,7 +81,7 @@ async function agentFor(user) {
 async function mine(user) {
   const a = await agentFor(user);
   const docs = named(a, await repo.list(a.id)).map(({ review_note, ...d }) => ({ ...d, review_note: d.status === "needs_update" ? review_note : null }));
-  return { documents: docs, kinds: DOC_KINDS, open: OPEN_FOR_DOCS.includes(a.status), ...summary(docs) };
+  return { documents: docs, kinds: settings.docKinds(), open: OPEN_FOR_DOCS.includes(a.status), ...summary(docs) };
 }
 async function uploadMine(user, body, ctx) {
   const a = await agentFor(user);
@@ -126,7 +129,7 @@ async function remove(actor, agentId, docId, reason, ctx) {
 // Filing name: "<Agency> - <Document type> - <date>.<ext>" (step 1: appropriate naming of each document)
 const filingName = (agent, d) => {
   const ext = String(d.original_name).split(".").pop().toLowerCase();
-  const what = d.kind === "other" && d.label ? clean(d.label) : DOC_KINDS[d.kind].file;
+  const what = d.kind === "other" && d.label ? clean(d.label) : (settings.docKinds()[d.kind]?.file || "Supporting document");
   return `${clean(agent.legal_name)} - ${what} - ${calendar.localDate(d.created_at)}.${ext}`.slice(0, 200);
 };
 async function open(actor, agentId, docId, ctx) {
@@ -152,7 +155,7 @@ async function requestInfo(actor, agentId, { message }, ctx) {
   const people = await agentRepo.persons(agentId);
   const to = people.find((p) => p.is_primary_contact && p.email) || people.find((p) => p.email);
   const recipient = to ? { email: to.email, name: to.name } : { email: a.email, name: a.legal_name };
-  const docs = (await repo.list(agentId)).filter((d) => d.status === "needs_update").map((d) => `${DOC_KINDS[d.kind].label}${d.review_note ? ` (${d.review_note})` : ""}`);
+  const docs = (await repo.list(agentId)).filter((d) => d.status === "needs_update").map((d) => `${settings.docKinds()[d.kind]?.label || d.kind}${d.review_note ? ` (${d.review_note})` : ""}`);
   await audit.log({ actorId: actor.id, action: "agent.information_requested", entityType: ENTITY, entityId: agentId, metadata: { to: recipient.email, message }, ...ctx });
   email.sendInfoRequest({
     to: recipient.email, firstName: recipient.name.split(" ")[0], agencyName: a.legal_name, message, documents: docs,

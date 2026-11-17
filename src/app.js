@@ -27,7 +27,10 @@ app.use("/api/agreements", express.json({ limit: "300kb" }));
 // evidence files travel as base64 (about 1.4x their size); see utils/upload.js
 app.use("/api/agent-application", express.json({ limit: `${Math.ceil(env.evidenceMaxMb * 1.4) + 1}mb` }));
 app.use("/api/coms", express.json({ limit: `${Math.ceil(env.evidenceMaxMb * 1.4) + 1}mb` }));
+app.use("/api/settings", express.json({ limit: "400kb" }));
 app.use(express.json({ limit: "100kb" }));
+// settings are read from a short-lived cache; make sure it is loaded before any route runs
+app.use("/api", (req, res, next) => require("./services/settingsService").ensureFresh().then(() => next(), next));
 app.use("/api", require("./routes"));
 app.get("/", (req, res) => res.send("AFC API is running"));
 

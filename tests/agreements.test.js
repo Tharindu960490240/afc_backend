@@ -51,6 +51,7 @@ const filesOnDisk = () => {
 
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
+  await require("./form2").restoreSettings(pool);
   // TRUNCATE ... users CASCADE also empties the templates table, so put the sample template back
   const sample = fs.readFileSync(path.join(__dirname, "..", "migrations", "003_agreement_signing.sql"), "utf8").split("$tpl$")[1];
   await pool.query("INSERT INTO agreement_templates (name, body, version, is_active) VALUES ('Education Agent Agreement', $1, 1, true)", [sample]);

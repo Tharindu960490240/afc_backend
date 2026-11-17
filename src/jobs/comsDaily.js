@@ -17,11 +17,11 @@ const tasks = require("../services/taskService");
 const { generateToken, hashToken } = require("../utils/tokens");
 const { ROLES } = require("../const");
 
-const REMIND_EVERY_WD = 3;
-const REMIND_MAX = 2;
+const settings = require("../services/settingsService");
 
 async function referenceReminders() {
   const today = calendar.localDate();
+  const { referee_reminder_days: REMIND_EVERY_WD, referee_max_reminders: REMIND_MAX } = settings.timers();
   let sent = 0;
   for (const c of await ddRepo.awaitingReminder()) {
     if (c.reminder_count >= REMIND_MAX) continue;
@@ -36,13 +36,14 @@ async function referenceReminders() {
 
 async function decisionTimers() {
   const today = calendar.localDate();
+  const { decision_days: DECIDE, amber_after_days: AMBER } = settings.timers();
   const people = (await taskRepo.usersWithRoles([ROLES.DIRECTOR, ROLES.CEO]));
   const out = { amber: 0, red: 0 };
   for (const d of await ddRepo.openDecisions()) {
     const elapsed = await calendar.businessDaysBetween(calendar.localDate(d.application_received_at), today);
-    const level = elapsed >= 10 ? "red" : elapsed >= 7 ? "amber" : null;
+    const level = elapsed >= DECIDE ? "red" : elapsed >= AMBER ? "amber" : null;
     if (!level || (level === "amber" && d.warned_at) || (level === "red" && d.alerted_at)) continue;
-    const daysLeft = Math.max(0, 10 - elapsed);
+    const daysLeft = Math.max(0, DECIDE - elapsed);
     for (const u of people) email.sendDecisionTimer({ to: u.email, firstName: u.first_name, agentName: d.legal_name, level, daysLeft, link: `${env.frontendUrl}/coms/agents/${d.id}` });
     if (level === "red") { await ddRepo.markAlerted(d.id); if (!d.warned_at) await ddRepo.markWarned(d.id); out.red++; }
     else { await ddRepo.markWarned(d.id); out.amber++; }
@@ -62,6 +63,7 @@ async function reconcileOnboarding() {
 }
 
 async function run() {
+  await settings.ensureFresh();
   const result = {
     referenceReminders: await referenceReminders(),
     decisionTimers: await decisionTimers(),
