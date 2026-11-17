@@ -35,6 +35,8 @@ router.post("/agents/:id/inductions/:inductionId/complete", validate(s.induction
 router.post("/agents/:id/inductions/:inductionId/reschedule", validate(s.inductionParams, "params"), validate(s.inductionReschedule), agents.rescheduleInduction);
 router.post("/agents/:id/inductions/:inductionId/cancel", validate(s.inductionParams, "params"), validate(s.agentDelete), agents.cancelInduction);
 
+router.post("/agents/:id/inductions/:inductionId/missed", validate(s.inductionParams, "params"), validate(s.agentDelete), agents.missedInduction);
+
 // ---- Part 2: due diligence, referees, decision, agreement ----
 const idp = validate(s.uuidParam, "params");
 router.get("/agents/:id/due-diligence", idp, d.get);

@@ -26,6 +26,31 @@ const fieldError = (field, message) => new AppError(400, "Please check the highl
 const need = (actor) => {
   if (!AGENT_PERMS.recordInduction.includes(actor.role)) throw new AppError(403, "You do not have permission to do that.");
 };
+// time, and the link (online) or place / phone number (in person, by phone) the agent needs to attend
+function bookingDetails(body, mode, prev = {}) {
+  const startTime = body.start_time || prev.start_time;
+  if (!startTime) throw fieldError("start_time", "Choose the start time");
+  const out = { startTime, meetingUrl: null, location: null };
+  if (mode === "online") {
+    const url = (body.meeting_url || prev.meeting_url || "").trim();
+    if (!url) throw fieldError("meeting_url", "Add the meeting link so the agent can join");
+    if (!/^https?:\/\//i.test(url)) throw fieldError("meeting_url", "Enter a full link starting with https://");
+    out.meetingUrl = url;
+  } else {
+    const loc = (body.location || prev.location || "").trim();
+    if (!loc) throw fieldError("location", mode === "phone" ? "Add the phone number the agent will be called on" : "Add where the induction will be held");
+    out.location = loc;
+  }
+  return out;
+}
+// "10:30 am AEDT" for the college's time zone
+const timeText = (date, time) => {
+  if (!time) return null;
+  const [h, m] = time.split(":").map(Number);
+  const when = new Date(`${date}T${time}:00`);
+  const zone = new Intl.DateTimeFormat("en-AU", { timeZone: env.timezone, timeZoneName: "short" }).formatToParts(when).find((x) => x.type === "timeZoneName")?.value;
+  return `${((h + 11) % 12) + 1}:${String(m).padStart(2, "0")} ${h < 12 ? "am" : "pm"}${zone ? ` ${zone}` : ""}`;
+};
 const noon = (day) => new Date(`${day}T12:00:00`);
 
 async function loadAgent(id) {
@@ -83,12 +108,13 @@ async function record(actor, agentId, body, ctx) {
     if (!body.scheduled_for) throw fieldError("scheduled_for", "Choose the date");
     if (body.scheduled_for < today) throw fieldError("scheduled_for", "Choose today or a later date");
     if (existing) throw new AppError(409, "An induction is already scheduled. Change or cancel it first.");
+    const det = bookingDetails(body, common.mode);
     const id = await withTransaction(async (client) => {
-      const iid = await repo.insert(client, { agentId, status: "scheduled", scheduledFor: body.scheduled_for, notes: body.notes, ...common });
+      const iid = await repo.insert(client, { agentId, status: "scheduled", scheduledFor: body.scheduled_for, notes: body.notes, ...det, ...common });
       await audit.log({ actorId: actor.id, action: "agent.induction_scheduled", entityType: ENTITY, entityId: agentId, after: { date: body.scheduled_for, by: fullName(conductor), mode: common.mode }, ...ctx }, client);
       return iid;
     });
-    await notifySchedule(agent, conductor, body.scheduled_for, common.mode);
+    await notifySchedule(agent, conductor, await repo.findById(id));
     return repo.findById(id);
   }
 
@@ -136,11 +162,13 @@ async function reschedule(actor, agentId, inductionId, body, ctx) {
   if (!body.scheduled_for) throw fieldError("scheduled_for", "Choose the date");
   if (body.scheduled_for < calendar.localDate()) throw fieldError("scheduled_for", "Choose today or a later date");
   const conductor = await staffMember(body.conducted_by || i.conducted_by || actor.id);
+  const mode = body.mode || i.mode;
+  const det = bookingDetails(body, mode, mode === i.mode ? i : { start_time: i.start_time });
   await withTransaction(async (client) => {
-    await repo.reschedule(client, i.id, { scheduledFor: body.scheduled_for, mode: body.mode || i.mode, conductedBy: conductor.id, actorId: actor.id });
+    await repo.reschedule(client, i.id, { scheduledFor: body.scheduled_for, mode, conductedBy: conductor.id, actorId: actor.id, ...det });
     await audit.log({ actorId: actor.id, action: "agent.induction_rescheduled", entityType: ENTITY, entityId: agentId, before: { date: i.scheduled_for }, after: { date: body.scheduled_for, by: fullName(conductor) }, ...ctx }, client);
   });
-  await notifySchedule(agent, conductor, body.scheduled_for, body.mode || i.mode);
+  await notifySchedule(agent, conductor, await repo.findById(i.id));
   return repo.findById(i.id);
 }
 
@@ -157,14 +185,50 @@ async function cancel(actor, agentId, inductionId, reason, ctx) {
   return repo.findById(i.id);
 }
 
+// the agent did not come: the booking is closed (not recorded as held) and a new one can be made
+async function markMissed(actor, agentId, inductionId, reason, ctx) {
+  need(actor);
+  await loadAgent(agentId);
+  const i = await repo.findById(inductionId);
+  if (!i || i.agent_id !== agentId) throw new AppError(404, "Induction not found.");
+  if (i.status !== "scheduled") throw new AppError(409, "This induction is already closed.");
+  await withTransaction(async (client) => {
+    await repo.cancel(client, i.id, reason, actor.id, "missed");
+    await audit.log({ actorId: actor.id, action: "agent.induction_missed", entityType: ENTITY, entityId: agentId, before: { date: i.scheduled_for }, metadata: { reason }, ...ctx }, client);
+  });
+  return repo.findById(i.id);
+}
+
+// what the agent sees in their portal: the booking with the way to join, and past sessions (no internal notes)
+async function mine(user) {
+  const found = await agentRepo.findByPortalUser(user.id);
+  const a = found && (await agentRepo.findById(found.id));
+  if (!a || a.deleted_at || !ELIGIBLE.includes(a.status)) return { eligible: false, scheduled: null, history: [], recorded_at: null };
+  const rows = await repo.forAgent(a.id);
+  const view = (i) => ({
+    id: i.id, status: i.status, mode: i.mode, date: i.scheduled_for || i.held_on, time: timeText(i.scheduled_for || i.held_on, i.start_time),
+    run_by: i.conducted_by_name, meeting_url: i.status === "scheduled" ? i.meeting_url : null, location: i.status === "scheduled" ? i.location : null,
+  });
+  return {
+    eligible: true,
+    recorded_at: a.induction_recorded_at,
+    scheduled: rows.filter((i) => i.status === "scheduled").map(view)[0] || null,
+    history: rows.filter((i) => i.status === "held").map(view),
+  };
+}
+
 // ---------- emails and reminders ----------
-async function notifySchedule(agent, conductor, date, mode) {
-  const link = `${env.frontendUrl}/coms/agents/${agent.id}`;
+const detailsOf = (i) => ({
+  date: i.scheduled_for, time: timeText(i.scheduled_for, i.start_time), mode: MODE_LABEL[i.mode] || i.mode,
+  meetingUrl: i.meeting_url, location: i.location,
+});
+async function notifySchedule(agent, conductor, i) {
   const people = await agentRepo.persons(agent.id);
   const contact = people.find((p) => p.is_primary_contact) || people[0];
   const to = contact?.email || agent.email;
-  if (to) email.sendInductionScheduled({ to, firstName: (contact?.name || agent.legal_name).split(" ")[0], date, mode: MODE_LABEL[mode] || mode, conductor: fullName(conductor) });
-  if (conductor.email) email.sendInductionReminder({ to: conductor.email, firstName: conductor.first_name, agentName: agent.legal_name, date, mode: MODE_LABEL[mode] || mode, level: "scheduled", link });
+  const d = detailsOf(i);
+  if (to) email.sendInductionScheduled({ to, firstName: (contact?.name || agent.legal_name).split(" ")[0], conductor: fullName(conductor), portalLink: `${env.frontendUrl}/agent/induction`, ...d });
+  if (conductor.email) email.sendInductionReminder({ to: conductor.email, firstName: conductor.first_name, agentName: agent.legal_name, level: "scheduled", link: `${env.frontendUrl}/coms/agents/${agent.id}`, ...d });
 }
 
 async function runReminders() {
@@ -175,9 +239,10 @@ async function runReminders() {
   for (const i of await repo.scheduledOpen()) {
     if (!i.conductor_email) continue;
     const link = `${env.frontendUrl}/coms/agents/${i.agent_id}`;
-    const base = { to: i.conductor_email, firstName: i.conductor_first_name, agentName: i.agent_name, date: i.scheduled_for, mode: MODE_LABEL[i.mode] || i.mode, link };
+    const base = { to: i.conductor_email, firstName: i.conductor_first_name, agentName: i.agent_name, link, ...detailsOf(i) };
     if (i.scheduled_for >= today && i.scheduled_for <= tomorrow && !i.reminder_sent_at) {
       email.sendInductionReminder({ ...base, level: "upcoming" });
+      if (i.agent_email) email.sendInductionScheduled({ to: i.agent_email, firstName: i.agent_name.split(" ")[0], conductor: i.conducted_by_name, portalLink: `${env.frontendUrl}/agent/induction`, reminder: true, ...detailsOf(i) });
       await repo.markReminded(i.id);
       out.reminded++;
     } else if (i.scheduled_for < today && !i.followup_sent_at) {
@@ -205,4 +270,4 @@ async function runReminders() {
   return out;
 }
 
-module.exports = { list, record, complete, reschedule, cancel, recordFromTask, runReminders };
+module.exports = { list, mine, record, complete, reschedule, cancel, markMissed, recordFromTask, runReminders };

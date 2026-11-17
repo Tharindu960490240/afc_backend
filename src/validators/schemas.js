@@ -289,18 +289,23 @@ const createPerson = z.object(personBody).partial({ role: true, marn: true, invo
 const updatePerson = z.object({ ...personBody, training_completed_at: nullable(z.coerce.date()), active: z.boolean() })
   .partial().strict().refine((v) => Object.keys(v).length > 0, "Nothing to update");
 const milestone = z.object({ type: z.enum(["prisms", "induction", "sms_contact"]), date: dateOnly.optional() }).strict();
+const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use the format HH:MM");
 const inductionBody = z.object({
   outcome: z.enum(["held", "scheduled"]),
   held_on: optional(dateOnly),
   scheduled_for: optional(dateOnly),
   conducted_by: optional(z.coerce.number().int().positive()),
   mode: optional(z.enum(["online", "in_person", "phone"])),
+  start_time: optional(timeOfDay),
+  meeting_url: optional(z.string().trim().url("Enter a full link starting with https://").max(500)),
+  location: optional(z.string().trim().max(300)),
   attendees: optional(z.string().trim().max(500)),
   notes: optional(z.string().trim().max(3000)),
 }).strict();
-const inductionComplete = inductionBody.omit({ outcome: true, scheduled_for: true });
+const inductionComplete = inductionBody.omit({ outcome: true, scheduled_for: true, start_time: true, meeting_url: true, location: true });
 const inductionReschedule = z.object({
   scheduled_for: dateOnly, conducted_by: optional(z.coerce.number().int().positive()), mode: optional(z.enum(["online", "in_person", "phone"])),
+  start_time: optional(timeOfDay), meeting_url: optional(z.string().trim().url("Enter a full link starting with https://").max(500)), location: optional(z.string().trim().max(300)),
 }).strict();
 const inductionParams = z.object({ id: z.string().uuid(), inductionId: z.string().uuid() });
 const csvBool = z.enum(["true", "false"]).transform((v) => v === "true");

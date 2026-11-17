@@ -7,4 +7,5 @@ const submit = asyncHandler(async (req, res) => {
   const data = await svc.submitApplication(req.user, req.body, clientInfo(req));
   res.json({ success: true, message: "Thank you. Your application has been submitted.", data });
 });
-module.exports = { show, submit };
+const induction = asyncHandler(async (req, res) => res.json({ success: true, data: await require("../services/inductionService").mine(req.user) }));
+module.exports = { show, submit, induction };

@@ -691,6 +691,7 @@ async function onboardingAgent(name, email) {
   return { D, task, owner };
 }
 const today = () => calendar.localDate();
+const BOOK = { mode: "online", start_time: "10:30", meeting_url: "https://teams.microsoft.com/l/meetup-join/abc123" };
 
 test("induction: staff record the date, who ran it and notes; the task is finished and the milestone set", async () => {
   const { D, task } = await onboardingAgent("Induct One", "a@inductone.in");
@@ -732,14 +733,14 @@ test("induction: the agent becomes Active when it is the last missing piece", as
 test("induction: schedule, reschedule, remind, then record the outcome", async () => {
   const { D, task } = await onboardingAgent("Induct Three", "a@inctthree.in");
   const url = `/api/coms/agents/${D}/inductions`;
-  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), -1) })).status, 400, "not in the past");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), -1), ...BOOK })).status, 400, "not in the past");
   outbox.length = 0;
-  const s = await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 1), mode: "online" });
+  const s = await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 1), ...BOOK });
   assert.equal(s.status, 201, JSON.stringify(s.body));
   assert.equal(s.body.data.status, "scheduled");
   assert.equal(s.body.data.conducted_by_name, "Marketing Test", "defaults to the person scheduling it");
   assert.ok(mails("a@inctthree.in", /induction/i).length >= 1, "the agent is told the date");
-  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 2) })).status, 409, "only one open booking");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 2), ...BOOK })).status, 409, "only one open booking");
   const id = s.body.data.id;
   assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "open", "scheduling does not finish the task");
   assert.equal((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [D])).rows[0].induction_recorded_at, null);
@@ -752,7 +753,7 @@ test("induction: schedule, reschedule, remind, then record the outcome", async (
   assert.equal((await require("../src/services/inductionService").runReminders()).reminded, 0, "only once");
 
   // moved to another day: the reminder starts again
-  const re = await post(`${url}/${id}/reschedule`, "marketing", { scheduled_for: calendar.addDays(today(), 5) });
+  const re = await post(`${url}/${id}/reschedule`, "marketing", { scheduled_for: calendar.addDays(today(), 5), start_time: "14:00" });
   assert.equal(re.status, 200, JSON.stringify(re.body));
   assert.equal(re.body.data.scheduled_for, calendar.addDays(today(), 5));
 
@@ -775,13 +776,13 @@ test("induction: schedule, reschedule, remind, then record the outcome", async (
 test("induction: a scheduled booking can be cancelled with a reason", async () => {
   const { D } = await onboardingAgent("Induct Four", "a@inctfour.in");
   const url = `/api/coms/agents/${D}/inductions`;
-  const id = (await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 4) })).body.data.id;
+  const id = (await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 4), ...BOOK })).body.data.id;
   assert.equal((await post(`${url}/${id}/cancel`, "marketing", {})).status, 400);
   const c = await post(`${url}/${id}/cancel`, "marketing", { reason: "Agent asked to move it" });
   assert.equal(c.status, 200);
   assert.equal(c.body.data.status, "cancelled");
   assert.equal((await audits("agent.induction_cancelled", D)).length, 1);
-  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 6) })).status, 201, "a new one can be booked");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 6), ...BOOK })).status, 201, "a new one can be booked");
 });
 
 test("induction: finishing the task on the board writes the induction record too", async () => {
@@ -814,4 +815,61 @@ test("induction task: reminded a week before it is due, flagged when overdue, an
   assert.ok(mails("director@afc.test", /overdue/i).length === 1, "directors are told too");
   assert.equal((await ind.runReminders()).taskOverdue, 0, "once");
   assert.ok(D);
+});
+
+test("induction booking: time, and the link (online) or place / phone number are required and shown to the agent", async () => {
+  const { D } = await onboardingAgent("Induct Seven", "a@inctseven.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const day = calendar.addDays(today(), 2);
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, mode: "online", meeting_url: "https://x.example/j" })).status, 400, "time is required");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, mode: "online", start_time: "10:30" })).status, 400, "online needs a link");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, mode: "online", start_time: "10:30", meeting_url: "javascript:alert(1)" })).status, 400, "only web links");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, mode: "in_person", start_time: "10:30" })).status, 400, "in person needs a place");
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, mode: "phone", start_time: "10:30" })).status, 400, "phone needs a number");
+
+  outbox.length = 0;
+  const ok = await post(url, "marketing", { outcome: "scheduled", scheduled_for: day, ...BOOK });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.data.start_time, "10:30");
+  const mail = mails("a@inctseven.in", /induction/i)[0];
+  assert.match(mail.text, /teams\.microsoft\.com/, "the agent gets the join link");
+  assert.match(mail.text, /10:30 am/);
+  // the agent's portal
+  const agentUid = await (async () => {
+    const hash = await hashPassword(PW);
+    const u = (await pool.query(`INSERT INTO users (email,password_hash,first_name,last_name,role) VALUES ('portal@inctseven.in',$1,'Pat','Seven','agent') RETURNING id`, [hash])).rows[0].id;
+    await pool.query(`INSERT INTO agent_persons (agent_id, name, email, role, is_primary_contact, portal_user_id) VALUES ($1,'Pat Seven','portal@inctseven.in','staff',false,$2)`, [D, u]);
+    return u;
+  })();
+  T.inductAgent = await login("portal@inctseven.in");
+  const mine = (await get("/api/agent-application/induction", "inductAgent")).body.data;
+  assert.equal(mine.eligible, true);
+  assert.equal(mine.scheduled.meeting_url, BOOK.meeting_url);
+  assert.equal(mine.scheduled.time.startsWith("10:30 am"), true);
+  assert.equal(mine.scheduled.run_by, "Marketing Test");
+  assert.equal(JSON.stringify(mine).includes("notes"), false, "internal notes are never sent to the agent");
+  assert.equal((await get("/api/agent-application/induction", "marketing")).status, 403, "agents only");
+  assert.ok(agentUid);
+
+  // changing the mode needs the new details
+  const id = ok.body.data.id;
+  assert.equal((await post(`${url}/${id}/reschedule`, "marketing", { scheduled_for: day, mode: "in_person" })).status, 400);
+  const moved = await post(`${url}/${id}/reschedule`, "marketing", { scheduled_for: day, mode: "in_person", location: "Level 2, 10 Bourke St, Melbourne" });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.equal(moved.body.data.meeting_url, null);
+  assert.equal((await get("/api/agent-application/induction", "inductAgent")).body.data.scheduled.location, "Level 2, 10 Bourke St, Melbourne");
+});
+
+test("induction: an agent who does not attend is recorded as missed, not held, and can be booked again", async () => {
+  const { D, task } = await onboardingAgent("Induct Eight", "a@incteight.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const id = (await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 1), ...BOOK })).body.data.id;
+  assert.equal((await post(`${url}/${id}/missed`, "marketing", {})).status, 400, "reason required");
+  const m = await post(`${url}/${id}/missed`, "marketing", { reason: "Agent did not join the call" });
+  assert.equal(m.status, 200, JSON.stringify(m.body));
+  assert.equal(m.body.data.status, "missed");
+  assert.equal((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [D])).rows[0].induction_recorded_at, null, "not recorded as held");
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "open");
+  assert.equal((await audits("agent.induction_missed", D)).length, 1);
+  assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 3), ...BOOK })).status, 201);
 });

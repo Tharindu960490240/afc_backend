@@ -10,6 +10,7 @@ const s = require("../validators/schemas");
 router.use(authenticate, requireRole("agent"));
 router.get("/", ctrl.show);
 router.post("/", limits.sensitive, validate(s.submitApplication), ctrl.submit);
+router.get("/induction", ctrl.induction);
 router.get("/certificate", docs.mineCertificateStatus);
 router.get("/certificate/download", limits.sensitive, docs.mineCertificate);
 router.get("/documents", docs.mine);

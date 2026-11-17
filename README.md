@@ -203,3 +203,8 @@ Run `npm run migrate` (adds 011, 012, 013).
 - A held induction sets the BR-02 milestone, finishes the INDUCTION task and activates the agent when the agreement and PRISMS are also recorded. Finishing the INDUCTION task on the task board writes the same record.
 - The old `milestones` endpoint no longer accepts `induction`.
 - Daily job: reminder to the person running a booked induction the day before, a follow-up if the outcome is not recorded, and reminders on the INDUCTION task (7 days before it is due, and once when overdue, also to directors). The 5-working-day escalation now applies to registration tasks only, not the 30-day induction task.
+
+### Induction booking details (migration 015)
+- A booking now needs a start time, plus a meeting link (online), or a place (in person), or the number to call (phone). Only http(s) links are accepted.
+- The agent is emailed the details when it is booked or changed, and again the day before. `GET /api/agent-application/induction` (agents only) returns the agent's own booking with the join link and past sessions, never internal notes.
+- `POST /api/coms/agents/:id/inductions/:inductionId/missed` records that the agent did not attend (not held, a new booking can be made).

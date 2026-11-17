@@ -53,6 +53,7 @@ const AGENTS = [
 ];
 
 async function remove() {
+  await pool.query("DELETE FROM agent_inductions WHERE agent_id IN (SELECT id FROM agents WHERE email LIKE '%@demo.example')");
   const r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
   const u = await pool.query("DELETE FROM users WHERE email LIKE '%@demo.example'");
   await pool.query("DELETE FROM invitations WHERE email LIKE '%@demo.example'");
@@ -215,6 +216,24 @@ async function main() {
        ('general','GENERAL','Sample: schedule quarterly catch-up call','Upcoming example',$1,$2,$5,'business',$4,'marketing_officer',$4)`,
       [first.id, day(-10), day(-3), marketing, day(12)]);
   }
+  // induction examples (Phase 3): one held, one booked online, one missed then re-booked by phone
+  const induct = async (email, rows) => {
+    const a = (await pool.query("SELECT id FROM agents WHERE email=$1", [email])).rows[0];
+    if (!a || (await pool.query("SELECT 1 FROM agent_inductions WHERE agent_id=$1 LIMIT 1", [a.id])).rowCount) return;
+    for (const r of rows) {
+      await pool.query(
+        `INSERT INTO agent_inductions (agent_id, status, mode, scheduled_for, held_on, start_time, meeting_url, location, conducted_by, attendees, notes, cancel_reason, created_by, updated_by, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$9,$9,$13)`,
+        [a.id, r.status, r.mode, day(r.scheduled), day(r.held), r.time || null, r.url || null, r.where || null, r.by, r.attendees || null, r.notes || null, r.reason || null, ts(r.created)]);
+    }
+  };
+  await induct("goldengate@demo.example", [{ status: "held", mode: "online", held: -70, scheduled: -72, time: "10:00", url: "https://teams.microsoft.com/l/meetup-join/demo-golden-gate", by: director,
+    attendees: "Mr Li Wei (principal), Ms Chen (counsellor)", notes: "Covered the code of ethics, PRISMS rules, how to submit applications and commission reporting.", created: -73 }]);
+  await induct("pacificrim@demo.example", [{ status: "scheduled", mode: "online", scheduled: 2, time: "10:30", url: "https://teams.microsoft.com/l/meetup-join/demo-pacific-rim", by: marketing, created: -1 }]);
+  await induct("lotus@demo.example", [
+    { status: "missed", mode: "online", scheduled: -6, time: "14:00", url: "https://teams.microsoft.com/l/meetup-join/demo-lotus", by: marketing, reason: "The agent did not join the call and did not reply to our email.", created: -9 },
+    { status: "scheduled", mode: "phone", scheduled: 5, time: "11:00", where: "+91 98765 43210", by: marketing, created: -5 },
+  ]);
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
   console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
   for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);

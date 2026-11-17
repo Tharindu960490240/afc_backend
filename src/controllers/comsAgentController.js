@@ -45,6 +45,7 @@ const recordInduction = asyncHandler(async (req, res) => {
 });
 const completeInduction = asyncHandler(async (req, res) => ok(res, await induction().complete(req.user, req.params.id, req.params.inductionId, req.body, clientInfo(req))));
 const rescheduleInduction = asyncHandler(async (req, res) => ok(res, await induction().reschedule(req.user, req.params.id, req.params.inductionId, req.body, clientInfo(req))));
+const missedInduction = asyncHandler(async (req, res) => ok(res, await induction().markMissed(req.user, req.params.id, req.params.inductionId, req.body.reason, clientInfo(req))));
 const cancelInduction = asyncHandler(async (req, res) => ok(res, await induction().cancel(req.user, req.params.id, req.params.inductionId, req.body.reason, clientInfo(req))));
 
 const addPerson = asyncHandler(async (req, res) => {
@@ -61,4 +62,4 @@ const exportCsv = asyncHandler(async (req, res) => {
   sendCsv(res, "agent-register", csv);
 });
 
-module.exports = { list, meta, detail, create, sendLink, update, status, remove, restore, milestone, inductions, recordInduction, completeInduction, rescheduleInduction, cancelInduction, addPerson, updatePerson, removePerson, exportCsv };
+module.exports = { list, meta, detail, create, sendLink, update, status, remove, restore, milestone, inductions, recordInduction, completeInduction, rescheduleInduction, cancelInduction, missedInduction, addPerson, updatePerson, removePerson, exportCsv };

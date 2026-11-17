@@ -476,27 +476,35 @@ function sendTaskAssigned({ to, firstName, title, agentName, dueDate, link }) {
 }
 
 // Phase 3: induction
-function sendInductionScheduled({ to, firstName, date, mode, conductor }) {
-  return deliver(to, "Your induction with Australian Federation College", {
-    preheader: `Your induction is on ${date}.`,
-    title: "Your induction is booked",
+const inductionWhen = ({ date, time }) => `**${date}**${time ? ` at **${time}**` : ""}`;
+const inductionHow = ({ mode, meetingUrl, location }) =>
+  meetingUrl ? `Join online: ${meetingUrl}` : location ? (mode === "by phone" ? `We will call you on: ${location}` : `Where: ${location}`) : null;
+function sendInductionScheduled({ to, firstName, date, time, mode, meetingUrl, location, conductor, portalLink, reminder }) {
+  const how = inductionHow({ mode, meetingUrl, location });
+  return deliver(to, reminder ? "Reminder: your induction with Australian Federation College" : "Your induction with Australian Federation College", {
+    preheader: `Your induction is on ${date}${time ? ` at ${time}` : ""}.`,
+    title: reminder ? "Your induction is coming up" : "Your induction is booked",
     greeting: `Hello ${firstName},`,
     paragraphs: [
-      `Your induction with Australian Federation College is booked for **${date}** (${mode}). It will be run by **${conductor}**.`,
-      "It covers how we work with agents, our compliance expectations and how to submit student applications. Please reply to this email if the date does not suit you.",
+      `Your induction with Australian Federation College is ${reminder ? "coming up on" : "booked for"} ${inductionWhen({ date, time })} (${mode}). It will be run by **${conductor}**.`,
+      ...(how ? [how] : []),
+      "It covers how we work with agents, our compliance expectations and how to submit student applications. You can see these details any time after you sign in to the agent portal. Please reply to this email if the time does not suit you.",
     ],
+    ...(portalLink ? { action: { text: "Open my induction", url: portalLink } } : {}),
   });
 }
-function sendInductionReminder({ to, firstName, agentName, date, mode, level, link }) {
+function sendInductionReminder({ to, firstName, agentName, date, time, mode, meetingUrl, location, level, link }) {
   const heading = level === "record_outcome" ? "Record the induction outcome" : level === "scheduled" ? "Induction scheduled" : "Induction coming up";
+  const how = inductionHow({ mode, meetingUrl, location });
   return deliver(to, `${heading}: ${agentName}`, {
     preheader: `${agentName} on ${date}`,
     title: heading,
     greeting: `Hello ${firstName},`,
     paragraphs: [
       level === "record_outcome"
-        ? `The induction for **${agentName}** was scheduled for **${date}**. Please record that it was held (date, who ran it and notes) or change the date. The agent cannot become Active until it is recorded.`
-        : `You are running the induction for **${agentName}** on **${date}** (${mode}).`,
+        ? `The induction for **${agentName}** was scheduled for **${date}**. Please record that it was held (date, who ran it and notes), mark that the agent did not attend, or change the date. The agent cannot become Active until it is recorded.`
+        : `You are running the induction for **${agentName}** on ${inductionWhen({ date, time })} (${mode}).`,
+      ...(how && level !== "record_outcome" ? [how] : []),
     ],
     action: { text: "Open the agent record", url: link },
   });
