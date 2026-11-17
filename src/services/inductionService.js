@@ -185,6 +185,66 @@ async function cancel(actor, agentId, inductionId, reason, ctx) {
   return repo.findById(i.id);
 }
 
+// ---------- correcting a held induction ----------
+const heldFor = async (agentId, inductionId) => {
+  const i = await repo.findById(inductionId);
+  if (!i || i.agent_id !== agentId) throw new AppError(404, "Induction not found.");
+  if (i.status !== "held") throw new AppError(409, "Only a held induction can be changed.");
+  return i;
+};
+
+// fix the date, who ran it, how, attendees or notes of a held induction. The change is audited with before and after.
+async function editHeld(actor, agentId, inductionId, body, ctx) {
+  need(actor);
+  const agent = await loadAgent(agentId);
+  const i = await heldFor(agentId, inductionId);
+  const heldOn = body.held_on || i.held_on;
+  const notes = body.notes ?? i.notes;
+  if (heldOn > calendar.localDate()) throw fieldError("held_on", "The date cannot be in the future");
+  if (!notes || notes.trim().length < 3) throw fieldError("notes", "Add a note about what was covered");
+  const conductor = await staffMember(body.conducted_by || i.conducted_by || actor.id);
+  const next = { heldOn, mode: body.mode || i.mode, conductedBy: conductor.id, attendees: body.attendees ?? i.attendees, notes, actorId: actor.id };
+  await withTransaction(async (client) => {
+    await repo.editHeld(client, i.id, next);
+    const latest = await repo.latestHeld(client, agentId);
+    if (latest) await agentRepo.setMilestone(client, agentId, "induction", noon(latest), actor.id);
+    await audit.log({
+      actorId: actor.id, action: "agent.induction_edited", entityType: ENTITY, entityId: agentId,
+      before: { date: i.held_on, by: i.conducted_by_name, mode: i.mode, attendees: i.attendees, notes: i.notes },
+      after: { date: heldOn, by: fullName(conductor), mode: next.mode, attendees: next.attendees, notes }, ...ctx,
+    }, client);
+  });
+  return repo.findById(i.id);
+}
+
+// undo a held induction recorded by mistake (director or administrator, with a reason).
+// If it was the only one, the "induction recorded" milestone is cleared and the finished task is opened again.
+// An agent who is already Active is not demoted: a warning tells the manager to review it.
+async function voidHeld(actor, agentId, inductionId, reason, ctx) {
+  if (!AGENT_PERMS.remove.includes(actor.role)) throw new AppError(403, "You do not have permission to do that.");
+  const agent = await loadAgent(agentId);
+  const i = await heldFor(agentId, inductionId);
+  let stillRecorded = false;
+  await withTransaction(async (client) => {
+    await repo.cancel(client, i.id, reason, actor.id, "voided");
+    const latest = await repo.latestHeld(client, agentId);
+    stillRecorded = !!latest;
+    await agentRepo.setMilestone(client, agentId, "induction", latest ? noon(latest) : null, actor.id);
+    if (!latest) {
+      await client.query(
+        `UPDATE coms_tasks SET status = 'open', completed_at = NULL, completed_by = NULL, completion_note = NULL, warned_at = NULL, reminded_at = NULL, updated_at = now()
+         WHERE id = (SELECT id FROM coms_tasks WHERE agent_id = $1 AND type = 'INDUCTION' AND status = 'done' AND deleted_at IS NULL ORDER BY completed_at DESC NULLS LAST LIMIT 1)`,
+        [agentId],
+      );
+    }
+    await audit.log({ actorId: actor.id, action: "agent.induction_undone", entityType: ENTITY, entityId: agentId, before: { date: i.held_on, by: i.conducted_by_name }, metadata: { reason, still_recorded: stillRecorded }, ...ctx }, client);
+  });
+  const warning = !stillRecorded && agent.status === "active"
+    ? "This agent is already Active and has not been changed. Record a new induction, or review whether they should stay Active."
+    : null;
+  return { ...(await repo.findById(i.id)), warning };
+}
+
 // the agent did not come: the booking is closed (not recorded as held) and a new one can be made
 async function markMissed(actor, agentId, inductionId, reason, ctx) {
   need(actor);
@@ -270,4 +330,4 @@ async function runReminders() {
   return out;
 }
 
-module.exports = { list, mine, record, complete, reschedule, cancel, markMissed, recordFromTask, runReminders };
+module.exports = { list, mine, record, complete, reschedule, cancel, markMissed, editHeld, voidHeld, recordFromTask, runReminders };

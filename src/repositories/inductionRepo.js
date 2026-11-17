@@ -28,6 +28,14 @@ const markHeld = (client, id, d) =>
   );
 const cancel = (client, id, reason, actorId, status = "cancelled") =>
   client.query(`UPDATE agent_inductions SET status = $4, cancel_reason = $2, updated_by = $3, updated_at = now() WHERE id = $1`, [id, reason, actorId, status]);
+const editHeld = (client, id, d) =>
+  client.query(
+    `UPDATE agent_inductions SET held_on = $2, mode = $3, conducted_by = $4, attendees = $5, notes = $6, updated_by = $7, updated_at = now() WHERE id = $1`,
+    [id, d.heldOn, d.mode, d.conductedBy || null, d.attendees || null, d.notes || null, d.actorId || null],
+  );
+// the date that counts for BR-02 is the latest held induction that is still standing
+const latestHeld = async (client, agentId) =>
+  (await client.query(`SELECT to_char(max(held_on), 'YYYY-MM-DD') AS d FROM agent_inductions WHERE agent_id = $1 AND status = 'held'`, [agentId])).rows[0].d;
 const reschedule = (client, id, d) =>
   client.query(
     `UPDATE agent_inductions SET scheduled_for = $2, mode = $3, conducted_by = $4, start_time = $6, meeting_url = $7, location = $8,
@@ -45,4 +53,4 @@ const scheduledOpen = async () =>
 const markReminded = (id) => query(`UPDATE agent_inductions SET reminder_sent_at = now() WHERE id = $1`, [id]);
 const markFollowedUp = (id) => query(`UPDATE agent_inductions SET followup_sent_at = now() WHERE id = $1`, [id]);
 
-module.exports = { forAgent, findById, insert, markHeld, cancel, reschedule, scheduledOpen, markReminded, markFollowedUp };
+module.exports = { forAgent, findById, insert, markHeld, editHeld, latestHeld, cancel, reschedule, scheduledOpen, markReminded, markFollowedUp };

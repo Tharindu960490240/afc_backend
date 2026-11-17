@@ -303,6 +303,7 @@ const inductionBody = z.object({
   notes: optional(z.string().trim().max(3000)),
 }).strict();
 const inductionComplete = inductionBody.omit({ outcome: true, scheduled_for: true, start_time: true, meeting_url: true, location: true });
+const inductionEdit = inductionBody.omit({ outcome: true, scheduled_for: true, start_time: true, meeting_url: true, location: true });
 const inductionReschedule = z.object({
   scheduled_for: dateOnly, conducted_by: optional(z.coerce.number().int().positive()), mode: optional(z.enum(["online", "in_person", "phone"])),
   start_time: optional(timeOfDay), meeting_url: optional(z.string().trim().url("Enter a full link starting with https://").max(500)), location: optional(z.string().trim().max(300)),
@@ -446,7 +447,7 @@ module.exports = {
   agentTermsSend,
   agentDocument, documentParams, documentReview, infoRequest, agentTerms,
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
-  comsAgentsQuery, uuidParam, personParams, inductionBody, inductionComplete, inductionReschedule, inductionParams, holidayBody, auditQuery,
+  comsAgentsQuery, uuidParam, personParams, inductionBody, inductionComplete, inductionEdit, inductionReschedule, inductionParams, holidayBody, auditQuery,
   upload, createReferee, updateReferee, refereeParams, checkParams, phoneCheck, referenceOutcome, referenceAnswers,
   dueDiligenceCheck, declarations, decision, sendAgentAgreement, taskCreate, taskComplete, taskAssign, tasksQuery, publicToken, fileParams, cancelTask,
   login, forgotPassword, resetPassword, changePassword, updateProfile,

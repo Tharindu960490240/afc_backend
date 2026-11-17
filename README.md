@@ -208,3 +208,7 @@ Run `npm run migrate` (adds 011, 012, 013).
 - A booking now needs a start time, plus a meeting link (online), or a place (in person), or the number to call (phone). Only http(s) links are accepted.
 - The agent is emailed the details when it is booked or changed, and again the day before. `GET /api/agent-application/induction` (agents only) returns the agent's own booking with the join link and past sessions, never internal notes.
 - `POST /api/coms/agents/:id/inductions/:inductionId/missed` records that the agent did not attend (not held, a new booking can be made).
+
+### Correcting an induction (migration 016)
+- `PATCH /api/coms/agents/:id/inductions/:inductionId` edits a held induction (date, who ran it, how, attendees, notes). Admin, marketing officer or director. Audited with before and after; the "induction recorded" date follows the latest held record.
+- `POST .../:inductionId/undo` (director or administrator, reason required) marks a held induction as undone. If it was the only one, the milestone is cleared and the finished induction task opens again. An agent who is already Active is not demoted: the response carries a warning.

@@ -873,3 +873,61 @@ test("induction: an agent who does not attend is recorded as missed, not held, a
   assert.equal((await audits("agent.induction_missed", D)).length, 1);
   assert.equal((await post(url, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 3), ...BOOK })).status, 201);
 });
+
+test("induction: a held record can be corrected (audited) and the milestone date follows", async () => {
+  const { D } = await onboardingAgent("Induct Nine", "a@inctnine.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const id = (await post(url, "marketing", { outcome: "held", held_on: calendar.addDays(today(), -3), notes: "Wrong notes", mode: "online" })).body.data.id;
+  assert.equal((await post(`${url}/${id}`, "accounts", {})).status, 404, "POST is not an edit route");
+  const patch = (t, body) => json("PATCH", `${url}/${id}`, { token: T[t], body });
+  assert.equal((await patch("accounts", { notes: "Fixed" })).status, 403);
+  assert.equal((await patch("marketing", { held_on: calendar.addDays(today(), 2) })).status, 400, "not in the future");
+  assert.equal((await patch("marketing", { notes: "x" })).status, 400, "notes still required");
+  const dir = (await pool.query(`SELECT id FROM users WHERE email='director@afc.test'`)).rows[0].id;
+  const r = await patch("marketing", { held_on: calendar.addDays(today(), -5), conducted_by: dir, attendees: "Principal", notes: "Corrected notes about the code of ethics" });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.held_on, calendar.addDays(today(), -5));
+  assert.equal(r.body.data.conducted_by_name, "Director Test");
+  const rec = (await pool.query(`SELECT to_char(induction_recorded_at,'YYYY-MM-DD') d FROM agents WHERE id=$1`, [D])).rows[0].d;
+  assert.equal(rec, calendar.addDays(today(), -5), "the milestone date follows the edit");
+  const log = (await audits("agent.induction_edited", D))[0];
+  assert.equal(log.before.notes, "Wrong notes");
+  assert.equal(log.after.notes, "Corrected notes about the code of ethics");
+  // a booking that was never held cannot be "edited"
+  const sched = (await post(`/api/coms/agents/${(await onboardingAgent("Induct Ten", "a@incten.in")).D}/inductions`, "marketing", { outcome: "scheduled", scheduled_for: calendar.addDays(today(), 2), ...BOOK })).body.data.id;
+  assert.ok(sched);
+});
+
+test("induction: undoing a held record needs a director or admin and a reason; the task opens again", async () => {
+  const { D, task } = await onboardingAgent("Induct Eleven", "a@incteleven.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const id = (await post(url, "marketing", { outcome: "held", held_on: today(), notes: "Recorded by mistake" })).body.data.id;
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "done");
+  assert.equal((await post(`${url}/${id}/undo`, "marketing", { reason: "wrong agent" })).status, 403, "marketing cannot undo");
+  assert.equal((await post(`${url}/${id}/undo`, "director", {})).status, 400, "reason required");
+  const u = await post(`${url}/${id}/undo`, "director", { reason: "Recorded against the wrong agent" });
+  assert.equal(u.status, 200, JSON.stringify(u.body));
+  assert.equal(u.body.data.status, "voided");
+  assert.equal(u.body.data.warning, null, "an onboarding agent has nothing to warn about");
+  assert.equal((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [D])).rows[0].induction_recorded_at, null);
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task])).rows[0].status, "open", "the task is open again");
+  assert.equal((await audits("agent.induction_undone", D)).length, 1);
+  assert.equal((await post(`${url}/${id}/undo`, "director", { reason: "again again" })).status, 409, "only once");
+  assert.equal((await json("PATCH", `${url}/${id}`, { token: T.marketing, body: { notes: "still edit" } })).status, 409, "an undone record cannot be edited");
+  assert.equal((await get("/api/agent-application/induction", "marketing")).status, 403);
+});
+
+test("induction: undoing when another held record stands keeps the milestone; an Active agent only gets a warning", async () => {
+  const { D } = await onboardingAgent("Induct Twelve", "a@incttwelve.in");
+  const url = `/api/coms/agents/${D}/inductions`;
+  const first = (await post(url, "marketing", { outcome: "held", held_on: calendar.addDays(today(), -10), notes: "First session" })).body.data.id;
+  const second = (await post(url, "marketing", { outcome: "held", held_on: calendar.addDays(today(), -2), notes: "Second session" })).body.data.id;
+  const u1 = await post(`${url}/${second}/undo`, "admin", { reason: "Entered twice by mistake" });
+  assert.equal(u1.status, 200);
+  assert.equal((await pool.query(`SELECT to_char(induction_recorded_at,'YYYY-MM-DD') d FROM agents WHERE id=$1`, [D])).rows[0].d, calendar.addDays(today(), -10), "falls back to the earlier session");
+  await pool.query(`UPDATE agents SET status='active' WHERE id=$1`, [D]);
+  const u2 = await post(`${url}/${first}/undo`, "admin", { reason: "Not a real induction" });
+  assert.equal(u2.status, 200);
+  assert.match(u2.body.data.warning, /already Active/);
+  assert.equal((await pool.query(`SELECT status FROM agents WHERE id=$1`, [D])).rows[0].status, "active", "not demoted automatically");
+});
