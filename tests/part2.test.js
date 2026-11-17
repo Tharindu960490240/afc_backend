@@ -449,6 +449,32 @@ test("recording the induction makes the agent Active once agreement, PRISMS and 
   assert.equal((await audits("agent.activated", A)).length, 1);
 });
 
+test("the certificate of appointment is emailed when onboarding finishes, and can be downloaded and re-sent", async () => {
+  const cert = mails("owner@delta.in", /certificate of appointment/i);
+  assert.equal(cert.length, 1, "one email at activation");
+  assert.equal(cert[0].attachments.length, 1);
+  assert.match(cert[0].attachments[0].filename, /Delta Education - Certificate of Appointment\.pdf/);
+  assert.ok(cert[0].attachments[0].size > 20000, "a real PDF is attached");
+  assert.ok((await audits("agent.certificate_sent", A)).length === 1);
+  // staff download
+  const staffRes = await fetch(`${base}/api/coms/agents/${A}/certificate`, { headers: { Authorization: `Bearer ${T.director}` } });
+  assert.equal(staffRes.status, 200);
+  assert.equal(staffRes.headers.get("content-type"), "application/pdf");
+  assert.equal((await staffRes.arrayBuffer()).byteLength > 20000, true);
+  // the agent's own download
+  const agentT = await login("owner@delta.in");
+  const status = await json("GET", "/api/agent-application/certificate", { token: agentT });
+  assert.equal(status.body.data.available, true);
+  const mine = await fetch(`${base}/api/agent-application/certificate/download`, { headers: { Authorization: `Bearer ${agentT}` } });
+  assert.equal(mine.status, 200);
+  // another agent cannot see it; roles without permission cannot re-send
+  assert.equal((await fetch(`${base}/api/coms/agents/${A}/certificate`, { headers: { Authorization: `Bearer ${agentT}` } })).status, 403);
+  assert.equal((await post(`/api/coms/agents/${A}/certificate/send`, "accounts")).status, 403);
+  outbox.length = 0;
+  assert.equal((await post(`/api/coms/agents/${A}/certificate/send`, "marketing")).status, 200);
+  assert.equal(mails("owner@delta.in", /certificate of appointment/i).length, 1);
+});
+
 test("recording the milestone on the agent record also finishes the matching task", async () => {
   const D = await applied("Golf Edu", "g@golf.in");
   // put the agent straight into onboarding with the two open tasks (the full path is covered above)

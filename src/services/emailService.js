@@ -26,7 +26,7 @@ const logoAttachments = () =>
     ? []
     : [{ filename: "afc-logo.png", path: path.join(__dirname, "..", "emails", "assets", "afc-logo.png"), cid: LOGO_CID }];
 
-async function send({ to, subject, html, text }) {
+async function send({ to, subject, html, text, files }) {
   if (env.email.mode === "brevo") {
     // HTTPS API: works on hosts such as Vercel where outgoing SMTP is blocked. The logo must come from LOGO_URL.
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -38,6 +38,7 @@ async function send({ to, subject, html, text }) {
         subject,
         htmlContent: html,
         textContent: text,
+        ...(files?.length ? { attachment: files.map((f) => ({ name: f.filename, content: f.content.toString("base64") })) } : {}),
       }),
       signal: AbortSignal.timeout(15000),
     });
@@ -46,7 +47,7 @@ async function send({ to, subject, html, text }) {
   }
   if (env.email.mode !== "smtp") {
     // Local development: show the message instead of sending it.
-    outbox.push({ to, subject, text, html });
+    outbox.push({ to, subject, text, html, attachments: (files || []).map((f) => ({ filename: f.filename, size: f.content.length })) });
     if (outbox.length > 50) outbox.shift();
     console.log(`\n--- EMAIL (console mode) ---\nTo: ${to}\nSubject: ${subject}\n${text}\n----------------------------\n`);
     return;
@@ -57,7 +58,7 @@ async function send({ to, subject, html, text }) {
     subject,
     html,
     text,
-    attachments: logoAttachments(),
+    attachments: [...logoAttachments(), ...(files || []).map((f) => ({ filename: f.filename, content: f.content, contentType: "application/pdf" }))],
   });
 }
 
@@ -73,7 +74,7 @@ const sendSafely = (message) => {
 const flushEmails = () => Promise.allSettled([...pending]);
 
 // Every email is: subject + compose({...}) from the shared layout.
-const deliver = (to, subject, content) => sendSafely({ to, subject, ...compose(content) });
+const deliver = (to, subject, content, files) => sendSafely({ to, subject, files, ...compose(content) });
 
 // ---------- messages ----------
 const ROLE_TEXT = {
@@ -199,6 +200,21 @@ function sendAgreementApproved({ to, firstName, title, expiresAt }) {
     action: { text: "Open my agreement", url: agentLink() },
     notice: { tone: "success", title: "You are all set", text: "We will remind you before the agreement expires." },
   });
+}
+
+// the certificate of appointment, attached as a PDF once the agent's onboarding is finished
+function sendCertificate({ to, firstName, agencyName, filename, buffer }) {
+  return deliver(to, "Your Certificate of Appointment", {
+    preheader: `${agencyName} is an authorised representative of ${require("../emails/college").name}.`,
+    title: "Your Certificate of Appointment",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `Welcome to ${require("../emails/college").name}. Your onboarding is complete and **${agencyName}** is now an authorised representative of the college.`,
+      "Your Certificate of Appointment is attached to this email as a PDF. You can also download it at any time from your agent portal.",
+    ],
+    action: { text: "Open my portal", url: `${env.frontendUrl}/agent/agreement` },
+    notice: { tone: "success", title: "You are all set", text: "Please keep the certificate for your records." },
+  }, [{ filename, content: buffer }]);
 }
 
 function sendAgreementCancelled({ to, firstName, title, reason }) {
@@ -469,6 +485,6 @@ module.exports = {
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,
   sendAgreementSent, sendAgreementSubmitted, sendAgreementRejected, sendAgreementApproved,
-  sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,
+  sendCertificate, sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,
   sendAgreementExpiryToAdmin,
 };

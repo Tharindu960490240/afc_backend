@@ -151,6 +151,8 @@ async function maybeActivate(agentId, actor, ctx) {
     await audit.log({ actorId: actor.id, action: "agent.activated", entityType: "agent", entityId: agentId, before: { status: "onboarding" }, after: { status: "active" }, ...ctx }, client);
     return true;
   });
+  // the certificate of appointment goes to the agent once onboarding is finished
+  if (activated) await require("./certificateService").onActivated(agentId, actor, ctx);
   return activated;
 }
 

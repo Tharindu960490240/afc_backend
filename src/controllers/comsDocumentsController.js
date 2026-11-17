@@ -44,4 +44,25 @@ const mineUpload = asyncHandler(async (req, res) => res.status(201).json({ succe
 const mineRemove = asyncHandler(async (req, res) => ok(res, await docs.removeMine(req.user, req.params.docId, ctx(req))));
 const mineDownload = asyncHandler(async (req, res) => send(res, await docs.openMine(req.user, req.params.docId, ctx(req))));
 
-module.exports = { list, upload, review, remove, download, requestInfo, terms, applicationPdf, mine, mineUpload, mineRemove, mineDownload };
+// ---- certificate of appointment ----
+const cert = require("../services/certificateService");
+const certificate = asyncHandler(async (req, res) => {
+  if (!cert.canSee(req.user.role)) throw new AppError(403, "You do not have permission to do that.");
+  send(res, await cert.open(req.params.id, req.user.id, ctx(req)));
+});
+const certificateSend = asyncHandler(async (req, res) => {
+  if (!AGENT_PERMS.sendAgreement.includes(req.user.role)) throw new AppError(403, "You do not have permission to do that.");
+  ok(res, await cert.sendToAgent(req.params.id, req.user.id, ctx(req)));
+});
+const mineCertificate = asyncHandler(async (req, res) => {
+  const found = await agentRepo.findByPortalUser(req.user.id);
+  if (!found) throw new AppError(404, "We could not find your application.");
+  send(res, await cert.open(found.id, req.user.id, ctx(req), { agentSelf: true }));
+});
+const mineCertificateStatus = asyncHandler(async (req, res) => {
+  const found = await agentRepo.findByPortalUser(req.user.id);
+  if (!found) throw new AppError(404, "We could not find your application.");
+  ok(res, await cert.statusFor(found.id));
+});
+
+module.exports = { certificate, certificateSend, mineCertificate, mineCertificateStatus, list, upload, review, remove, download, requestInfo, terms, applicationPdf, mine, mineUpload, mineRemove, mineDownload };

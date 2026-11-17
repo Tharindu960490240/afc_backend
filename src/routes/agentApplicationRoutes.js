@@ -10,6 +10,8 @@ const s = require("../validators/schemas");
 router.use(authenticate, requireRole("agent"));
 router.get("/", ctrl.show);
 router.post("/", limits.sensitive, validate(s.submitApplication), ctrl.submit);
+router.get("/certificate", docs.mineCertificateStatus);
+router.get("/certificate/download", limits.sensitive, docs.mineCertificate);
 router.get("/documents", docs.mine);
 router.post("/documents", limits.sensitive, validate(s.agentDocument), docs.mineUpload);
 router.post("/documents/:docId/delete", validate(s.documentParams.omit({ id: true }), "params"), docs.mineRemove);

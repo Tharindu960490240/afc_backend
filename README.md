@@ -160,3 +160,11 @@ Procedure steps
 6. **Reporting:** on countersign, five tasks are created: PRISMS (CoE Administrator), ASQAnet (CoE Administrator), website listing (Administration), record and report commission and bonus (Marketing), induction. PRISMS, ASQAnet and website are due in 5 working days. The 30-day legal deadline for ASQAnet is kept as a backstop (alert at day 20, escalation at day 25). Every user in the responsible role is emailed. Saving the commission and bonus on the agent record (`POST /coms/agents/:id/terms`) emails AFC Accounts and finishes the commission task.
 
 Assumptions to confirm: "AFC Administration" is the `admin` role; "COE Administrator" is `coe_admin`; the 5 days are working days; accepted documents may not be removed by the agent.
+
+## Certificate of Appointment (final onboarding step)
+
+Run `npm run migrate` (migration 009). The certificate follows the college's design (logo, Anton font, signature of the Strategy & Growth Director). It is drawn from the agent's current signed agreement each time, so every download or email uses the current design.
+- When onboarding finishes and the agent becomes **Active**, the certificate is emailed to the agent's main contact as a PDF attachment.
+- Staff: **Agreements** tab on the agent record (when Active) has **Download (PDF)** and **Email it to the agent** (`GET /api/coms/agents/:id/certificate`, `POST /api/coms/agents/:id/certificate/send`).
+- Agent: **My agreement** page shows a **Download certificate** button once Active (`GET /api/agent-application/certificate`, `.../certificate/download`).
+- Signatory shown on the certificate: set `CERT_SIGNER_NAME` and `CERT_SIGNER_POSITION` (defaults: Sohel RANA, Strategy & Growth Director). The signature image is `src/emails/assets/signature-sohel-rana.png`. Replace it if the signatory changes.

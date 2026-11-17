@@ -48,6 +48,8 @@ router.get("/agents/:id/documents", idp, docsCtrl.list);
 router.post("/agents/:id/documents", limits.sensitive, idp, validate(s.agentDocument), docsCtrl.upload);
 router.post("/agents/:id/documents/:docId/review", validate(s.documentParams, "params"), validate(s.documentReview), docsCtrl.review);
 router.post("/agents/:id/documents/:docId/delete", validate(s.documentParams, "params"), validate(s.agentDelete), docsCtrl.remove);
+router.get("/agents/:id/certificate", idp, limits.sensitive, docsCtrl.certificate);
+router.post("/agents/:id/certificate/send", idp, limits.sensitive, docsCtrl.certificateSend);
 router.get("/agents/:id/documents/:docId/download", limits.sensitive, validate(s.documentParams, "params"), docsCtrl.download);
 router.post("/agents/:id/request-information", limits.sensitive, idp, validate(s.infoRequest), docsCtrl.requestInfo);
 router.get("/agents/:id/application.pdf", limits.sensitive, idp, docsCtrl.applicationPdf);

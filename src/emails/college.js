@@ -6,6 +6,9 @@ module.exports = {
   phone: "+61 3 6393 3225",
   email: "info@afcollege.edu.au",
   cricos: "03854G",
+  abn: "49635394857",
+  // signs the certificate of appointment
+  signer: { name: process.env.CERT_SIGNER_NAME || "Sohel RANA", position: process.env.CERT_SIGNER_POSITION || "Strategy & Growth Director" },
   rto: "45616",
   campuses: [
     "Level 1, 126 Charles St, Launceston TAS 7250",
