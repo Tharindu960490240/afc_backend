@@ -48,6 +48,8 @@ const AGENTS = [
     referees: [["Mr Ben Cruz", "Manila College", "ben@demo.example", "positive"]], checks: true, tasks: "onboarding" },
   { name: "Demo - Golden Gate Overseas", country: "China", email: "goldengate@demo.example", status: "active", received: -90, decided: -80, prisms: true, induction: true, login: true, agreement: "active", effective: -75,
     referees: [["Ms Wei Zhang", "Shanghai Partners", "wei@demo.example", "positive"]], checks: true, tasks: "done" },
+  { name: "Demo - Sunrise Education Partners", country: "Indonesia", email: "sunrise@demo.example", status: "active", received: -370, decided: -360, prisms: true, induction: true, login: true, agreement: "active", effective: -340,
+    referees: [["Ms Dewi Lestari", "Jakarta Language Centre", "dewi@demo.example", "positive"]], checks: true, tasks: "done" },
   { name: "Demo - Quick Visa Co", country: "Nigeria", email: "quickvisa@demo.example", status: "rejected", received: -40, decided: -30, reason: "Two referees reported misleading advice to students.",
     referees: [["Mr Tunde Bello", "Lagos School", "tunde@demo.example", "negative"]], checks: true },
 ];
@@ -60,6 +62,13 @@ async function remove() {
     try { await pool.query(`DELETE FROM ${t} WHERE agent_id IN ${demo}`); } finally { await pool.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`); }
   }
   await pool.query(`DELETE FROM marketing_material_deliveries WHERE agent_id IN ${demo}`);
+  const mats = (await pool.query(`SELECT m.id, f.id AS file_id, f.storage_key FROM marketing_materials m JOIN coms_files f ON f.id = m.file_id WHERE f.original_name LIKE 'demo-%'`)).rows;
+  for (const m of mats) {
+    await pool.query("DELETE FROM marketing_material_deliveries WHERE material_id = $1", [m.id]);
+    await pool.query("DELETE FROM marketing_materials WHERE id = $1", [m.id]);
+    await pool.query("DELETE FROM coms_files WHERE id = $1", [m.file_id]);
+    await require("../src/services/fileStorage").remove(m.storage_key).catch(() => null);
+  }
   await pool.query("DELETE FROM agent_inductions WHERE agent_id IN (SELECT id FROM agents WHERE email LIKE '%@demo.example')");
   const r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
   const u = await pool.query("DELETE FROM users WHERE email LIKE '%@demo.example'");
@@ -258,6 +267,36 @@ async function main() {
   await online("goldengate@demo.example", 99, true, -74);
   await online("pacificrim@demo.example", 99, true, -1);
   await online("lotus@demo.example", 3, false, -2);
+  await online("sunrise@demo.example", 99, true, -330);
+  // marketing materials (Phase 3): two approved, one waiting for approval. Small generated PDFs stand in for AFC's real files.
+  if (!(await pool.query("SELECT 1 FROM marketing_materials m JOIN coms_files f ON f.id = m.file_id WHERE f.original_name LIKE 'demo-%' LIMIT 1")).rowCount) {
+    const PDFDocument = require("pdfkit");
+    const storage = require("../src/services/fileStorage");
+    const pdf = (title) => new Promise((resolve) => {
+      const d = new PDFDocument(); const parts = [];
+      d.on("data", (c) => parts.push(c)); d.on("end", () => resolve(Buffer.concat(parts)));
+      d.fontSize(22).text(title); d.moveDown().fontSize(12).text("Sample material for the demo only. AFC replaces this with its real, approved file.");
+      d.end();
+    });
+    for (const [title, category, version, desc, status, name] of [
+      ["AFC agent brochure 2027", "brochure", "1.0", "Courses, campuses and entry requirements.", "approved", "demo-agent-brochure.pdf"],
+      ["International student fee schedule", "fees", "2.1", "Tuition and fee schedule for 2027 intakes.", "approved", "demo-fee-schedule.pdf"],
+      ["Updated refund policy summary", "policy", "1.0", "Waiting for Marketing to approve.", "draft", "demo-refund-policy.pdf"],
+    ]) {
+      const buf = await pdf(title);
+      const saved = await storage.save(buf, "pdf", "coms");
+      const f = (await pool.query(
+        `INSERT INTO coms_files (kind, original_name, storage_key, mime_type, size_bytes, sha256, uploaded_by) VALUES ('marketing_material',$1,$2,'application/pdf',$3,$4,$5) RETURNING id`,
+        [name, saved.key, saved.size ?? buf.length, saved.sha256 ?? crypto.createHash("sha256").update(buf).digest("hex"), marketing])).rows[0].id;
+      await pool.query(
+        `INSERT INTO marketing_materials (title, description, category, version, file_id, status, uploaded_by, approved_by, approved_at)
+         VALUES ($1,$2,$3,$4,$5,$6::varchar,$7,CASE WHEN $6::text='approved' THEN $8::bigint END,CASE WHEN $6::text='approved' THEN now() - interval '5 days' END)`,
+        [title, desc, category, version, f, status, marketing, director]);
+    }
+  }
+  // the month-11 renewal task for Sunrise (the daily job does this on a live system)
+  await require("../src/services/settingsService").ensureFresh();
+  await require("../src/services/taskService").createRenewalTasks();
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
   console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
   for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);
