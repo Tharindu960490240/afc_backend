@@ -1073,13 +1073,15 @@ test("marketing materials: hidden until approved, agents are told once, only aft
 
   outbox.length = 0;
   assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "accounts")).status, 403);
-  const ap = await post(`/api/coms/induction/materials/${id}/approve`, "marketing");
+  assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "marketing")).status, 403, "Marketing uploads but cannot approve");
+  assert.equal((await post("/api/coms/induction/materials", "marketing", { ...body, approve: true })).status, 403, "nor approve at upload");
+  const ap = await post(`/api/coms/induction/materials/${id}/approve`, "director");
   assert.equal(ap.status, 200, JSON.stringify(ap.body));
   assert.equal(ap.body.data.status, "approved");
   assert.ok(ap.body.data.notified >= 2, "active agents were notified");
   assert.ok(mails("a@onlinefour.in", /new marketing material/i).length === 1);
   assert.ok(mails("a@onlinefive.in", /new marketing material/i).length === 1);
-  assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "marketing")).status, 409, "approved once");
+  assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "director")).status, 409, "approved once");
 
   // safety net: a notice that never went out is sent by the daily job, and one older than 24 hours is flagged in the audit trail
   const first = await runMaterialNoticesCheck(id);
@@ -1093,7 +1095,8 @@ test("marketing materials: hidden until approved, agents are told once, only aft
   assert.deepEqual((await locked.as("GET", "/api/agent-application/materials")).body.data, { unlocked: false, materials: [] });
   assert.equal((await locked.as("GET", `/api/agent-application/materials/${id}/download`)).status, 403);
 
-  assert.equal((await post(`/api/coms/induction/materials/${id}/retire`, "marketing")).status, 200);
+  assert.equal((await post(`/api/coms/induction/materials/${id}/retire`, "marketing")).status, 403);
+  assert.equal((await post(`/api/coms/induction/materials/${id}/retire`, "ceo")).status, 200);
   assert.equal((await unlocked.as("GET", "/api/agent-application/materials")).body.data.materials.length, 0, "retired material disappears");
   assert.equal((await audits("material.approved", id)).length, 1);
 });

@@ -220,6 +220,8 @@ Follows the client requirements for Phase 3. An agent works through six modules 
 - Staff edit modules and publish PP versions at Induction and materials. A new PP version asks agents to acknowledge again.
 - Marketing materials are drafts until approved; approving emails every active agent.
 - Safety net for the 24-hour notice duty: the daily job re-sends the notice to any active agent who was not told about an approved material, and records `material.notice_late` in the audit trail if it was more than 24 hours after approval.
+- Migration 019 replaces the starter module text with content written from AFC's website and published policies. It is a draft for AFC to review. The policies and procedures text is still the placeholder until AFC sends the updated version (with the AI wording).
+- Who does what: Marketing (and Admin, Director, CEO) upload materials; only Admin, Director and CEO approve or retire them.
 - The module, PP and starter-material wording is placeholder text for AFC to review and replace.
 
 ### Renewal task (migration 018)

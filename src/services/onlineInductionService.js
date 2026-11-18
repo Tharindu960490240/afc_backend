@@ -162,6 +162,7 @@ const listMaterials = async () => (await repo.materials()).map(materialView);
 
 async function createMaterial(actor, body, ctx) {
   need(actor, "manageMaterials");
+  if (body.approve) need(actor, "approveMaterials"); // Marketing uploads a draft; AFC management approves it
   const up = parseUpload(body.file);
   let key = null;
   let id;
@@ -184,7 +185,7 @@ async function createMaterial(actor, body, ctx) {
 
 // approve: visible to agents from now on, and every active agent is told (the 24-hour duty). One email per agent, with the time recorded.
 async function approveMaterial(actor, id, ctx) {
-  need(actor, "manageMaterials");
+  need(actor, "approveMaterials");
   const m = await repo.material(id);
   if (!m) throw new AppError(404, "Material not found.");
   if (m.status === "approved") throw new AppError(409, "This material is already approved.");
@@ -223,7 +224,7 @@ async function runMaterialNotices() {
 }
 
 async function retireMaterial(actor, id, ctx) {
-  need(actor, "manageMaterials");
+  need(actor, "approveMaterials");
   const m = await repo.material(id);
   if (!m) throw new AppError(404, "Material not found.");
   if (m.status === "retired") throw new AppError(409, "This material is already retired.");

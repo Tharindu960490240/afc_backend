@@ -41,7 +41,8 @@ const PERSON_ROLES = Object.freeze(["director", "staff", "sub_agent"]);
 const INDUCTION_PERMS = Object.freeze({
   manageModules: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.COMPLIANCE, ROLES.MARKETING],
   publishPolicy: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.COMPLIANCE],
-  manageMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING],
+  manageMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.MARKETING], // upload and view (Marketing implements)
+  approveMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO], // approve or retire: AFC management only, not the person who uploads
 });
 const MATERIAL_CATEGORIES = Object.freeze({ brochure: "Brochure", fees: "Fees", policy: "Policy", course_guide: "Course guide", other: "Other" });
 
