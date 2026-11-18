@@ -17,6 +17,11 @@ router.post("/online-induction/modules/:id/complete", validate(s.idOnly, "params
 router.post("/online-induction/acknowledge", limits.sensitive, validate(s.ppAcknowledge), oi.acknowledge);
 router.get("/materials", oi.myMaterials);
 router.get("/materials/:id/download", limits.sensitive, validate(s.idOnly, "params"), oi.myMaterialDownload);
+const crm = require("../controllers/crmController");
+router.get("/leads", crm.myLeads);
+router.post("/leads", validate(s.leadBody), crm.addLead);
+router.patch("/leads/:id", validate(s.idOnly, "params"), validate(s.leadBody), crm.updateLead);
+router.get("/communications", crm.myCommunications);
 router.get("/certificate", docs.mineCertificateStatus);
 router.get("/certificate/download", limits.sensitive, docs.mineCertificate);
 router.get("/documents", docs.mine);

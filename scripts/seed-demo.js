@@ -57,6 +57,17 @@ const AGENTS = [
 async function remove() {
   // online-induction completions and acknowledgements are evidence (guarded by triggers): lift the guard only for the demo agents
   const demo = "(SELECT id FROM agents WHERE email LIKE '%@demo.example')";
+  // Phase 4 records are kept for 7 years (delete is blocked by triggers). Lift the guard only for the demo agents, then put it back.
+  const keep = ["agent_communications", "agent_leads", "agent_training_records", "agent_corrective_actions", "agent_monitoring_reviews", "marketing_broadcast_deliveries", "marketing_broadcasts", "agents"];
+  for (const t of keep) await pool.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
+  let r;
+  try {
+    for (const t of ["agent_communications", "agent_leads", "agent_training_records", "agent_corrective_actions", "agent_monitoring_reviews", "marketing_broadcast_deliveries"]) {
+      await pool.query(`DELETE FROM ${t} WHERE agent_id IN ${demo}`);
+    }
+    await pool.query("DELETE FROM marketing_broadcast_deliveries WHERE broadcast_id IN (SELECT id FROM marketing_broadcasts WHERE subject LIKE '[Demo]%')");
+    await pool.query("DELETE FROM marketing_broadcasts WHERE subject LIKE '[Demo]%'");
+    await pool.query("DELETE FROM coms_tasks WHERE type = 'MONITORING' AND agent_id IN " + demo);
   for (const t of ["induction_completions", "pp_acknowledgements"]) {
     await pool.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
     try { await pool.query(`DELETE FROM ${t} WHERE agent_id IN ${demo}`); } finally { await pool.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`); }
@@ -70,7 +81,10 @@ async function remove() {
     await require("../src/services/fileStorage").remove(m.storage_key).catch(() => null);
   }
   await pool.query("DELETE FROM agent_inductions WHERE agent_id IN (SELECT id FROM agents WHERE email LIKE '%@demo.example')");
-  const r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
+  r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
+  } finally {
+    for (const t of keep) await pool.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`);
+  }
   const u = await pool.query("DELETE FROM users WHERE email LIKE '%@demo.example'");
   await pool.query("DELETE FROM invitations WHERE email LIKE '%@demo.example'");
   console.log(`Removed ${r.rowCount} demo agents and ${u.rowCount} demo logins (their referees, checks, agreements and tasks go with them).`);
@@ -297,6 +311,61 @@ async function main() {
   // the month-11 renewal task for Sunrise (the daily job does this on a live system)
   await require("../src/services/settingsService").ensureFresh();
   await require("../src/services/taskService").createRenewalTasks();
+  // Phase 4 (agent CRM): communications, leads, training, a monitoring review with a corrective notice, and two broadcasts
+  const demoAgent = async (email) => (await pool.query("SELECT id FROM agents WHERE email=$1", [email])).rows[0]?.id;
+  const gg = await demoAgent("goldengate@demo.example"), sr = await demoAgent("sunrise@demo.example"), pr = await demoAgent("pacificrim@demo.example");
+  if (gg && !(await pool.query("SELECT 1 FROM agent_communications WHERE agent_id = $1 LIMIT 1", [gg])).rowCount) {
+    const comm = (agent, type, direction, daysAgo, staffId, subject, summary, source = "staff") => pool.query(
+      `INSERT INTO agent_communications (agent_id, type, direction, occurred_at, staff_id, subject, summary, source) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [agent, type, direction, ts(daysAgo), staffId, subject, summary, source]);
+    await comm(gg, "phone", "outbound", -60, marketing, "Welcome call", "Welcomed the agent, explained how to submit applications and where the marketing materials are.");
+    await comm(gg, "email", "inbound", -40, null, "Question about intake dates", "Hello, when is the next intake for the Diploma of Leadership and Management?", "inbound_email");
+    await comm(gg, "email", "outbound", -39, marketing, "Re: Question about intake dates", "Replied with the 2027 intake dates and the course page link.");
+    await comm(gg, "meeting", "outbound", -20, director, "Quarterly catch-up", "Video call with Mr Li Wei. Agreed to focus on Melbourne campus IT diplomas. Agent asked about commission timing.");
+    await comm(gg, "note", "internal", -19, director, null, "Agent is responsive and well organised. Will look at a higher tier at the next review.");
+    await comm(sr, "phone", "outbound", -30, marketing, "Renewal heads-up", "Told the agent the agreement ends soon and we will send the renewal. Agent wants to renew.");
+    await comm(sr, "email", "outbound", -12, marketing, "Corrected fee information", "Asked the agent to remove an old fee table from their website.");
+    await comm(pr, "phone", "outbound", -3, marketing, "Induction reminder", "Reminded the agent to finish the online induction modules.");
+    const lead = (agent, name, country, course, daysAgo, outcome, notes) => pool.query(
+      `INSERT INTO agent_leads (agent_id, student_name, country, course_interest, contact_date, outcome, notes) VALUES ($1,$2,$3,$4,$5,$6,$7)`, [agent, name, country, course, day(daysAgo), outcome, notes || null]);
+    await lead(gg, "Wang Fang", "China", "ICT50220 Diploma of Information Technology", -35, "submitted", "Application sent in.");
+    await lead(gg, "Liu Yang", "China", "BSB50420 Diploma of Leadership and Management", -28, "submitted");
+    await lead(gg, "Chen Hao", "China", "SIT50422 Diploma of Hospitality Management", -21, "not_proceeding", "Chose another provider.");
+    await lead(gg, "Zhao Mei", "China", "General English (ELICOS)", -9, "pending");
+    await lead(gg, "Sun Li", "China", "CHC52025 Diploma of Community Services", -3, "pending", "Waiting for English test result.");
+    await lead(sr, "Budi Santoso", "Indonesia", "ICT60220 Advanced Diploma of Information Technology", -45, "submitted");
+    await lead(sr, "Sari Dewi", "Indonesia", "AHC51422 Diploma of Agribusiness Management", -15, "pending");
+    await pool.query(`INSERT INTO agent_training_records (agent_id, title, kind, held_on, delivered_by, notes, created_by) VALUES ($1,'Refresher: fees and refunds 2027','refresher',$2,'Maya Marketing','Online, 40 minutes. Covered the refund table and visa refusal rules.',$3)`, [sr, day(-25), marketing]);
+    await pool.query(`INSERT INTO agent_training_records (agent_id, title, kind, held_on, delivered_by, created_by) VALUES ($1,'Product update: new IT specialisations','product_update',$2,'Sohel Director',$3)`, [gg, day(-14), director]);
+    // monitoring: Sunrise's six-month review found a problem; a notice went out and is waiting for the agent to fix it
+    const rev = (await pool.query(
+      `INSERT INTO agent_monitoring_reviews (agent_id, period_start, period_end, applications_submitted, conversion_rate, student_performance, incidents_found, unauthorised_advice_found, unauthorised_advice_detail, outcome, notes, completed_by, completed_at)
+       VALUES ($1,$2,$3,4,50,'Two of the four enrolled students are attending well. One is at risk on course progress.',false,true,'An old fee table was still on the agent website.','issues_found','Agent was cooperative.',$4,$5) RETURNING id`,
+      [sr, day(-340), day(-160), marketing, ts(-158)])).rows[0].id;
+    await pool.query(
+      `INSERT INTO agent_corrective_actions (agent_id, review_id, issues, required_actions, due_date, notice_subject, notice_body, status, drafted_by, sent_by, sent_at, sent_to)
+       VALUES ($1,$2,'An old fee table was on the agent website','Remove the old fee table and use the current fee schedule',$3,'Corrective action required: Education Agent Agreement',
+       $4,'sent',$5,$5,$6,'sunrise@demo.example')`,
+      [sr, rev, day(10), "Dear Demo - Sunrise Education Partners,\n\nOur six-monthly review identified the following:\n\n- An old fee table was on the agent website\n\nPlease do the following:\n\n- Remove the old fee table and use the current fee schedule\n\nFailing to carry out a corrective action is grounds for termination of the agreement.\n\nKind regards,\nAustralian Federation College", marketing, ts(-5)]);
+    await comm(sr, "corrective_action", "outbound", -5, marketing, "Corrective action required: Education Agent Agreement", "Our six-monthly review identified an old fee table on the agent website. Please remove it by the due date.", "system");
+    // the next monitoring task, so the Tasks board shows one
+    const owner = marketing;
+    const ag = (await pool.query("SELECT g.id FROM agreements g JOIN agent_persons p ON p.portal_user_id = g.agent_id WHERE p.agent_id = $1 AND g.status = 'active' LIMIT 1", [sr])).rows[0];
+    await pool.query(
+      `INSERT INTO coms_tasks (category, type, title, agent_id, agreement_id, trigger_event, trigger_date, due_date, due_basis, owner_id, owner_role, description)
+       VALUES ('general','MONITORING','Complete the 6-monthly monitoring form for Demo - Sunrise Education Partners',$1,$2,'monitoring_period_2',$3,$4,'calendar',$5,'marketing_officer','Open the agent record, go to the Monitoring tab and complete the Agent Monitoring Form. Saving the form closes this task.')`,
+      [sr, ag?.id || null, day(-1), day(25), owner]);
+    // broadcasts: one sent, one waiting for the Director to approve
+    const bc = (await pool.query(
+      `INSERT INTO marketing_broadcasts (kind, subject, body, status, drafted_by, approved_by, approved_at, sent_at, recipients) VALUES ('fee','[Demo] AFC fee update for 2027',$1,'sent',$2,$3,$4,$4,2) RETURNING id`,
+      ["We are writing to let you know about a fee update at Australian Federation College.\n\nWhat has changed:\n- Tuition fees for 2027 intakes are in the new fee schedule\n\nPlease use only the current approved materials.", marketing, director, ts(-8)])).rows[0].id;
+    for (const a of [gg, sr]) {
+      await pool.query("INSERT INTO marketing_broadcast_deliveries (broadcast_id, agent_id, sent_to, sent_at) VALUES ($1,$2,'demo',$3)", [bc, a, ts(-8)]);
+      await comm(a, "broadcast", "outbound", -8, marketing, "[Demo] AFC fee update for 2027", "Tuition fees for 2027 intakes are in the new fee schedule.", "system");
+    }
+    await pool.query(
+      `INSERT INTO marketing_broadcasts (kind, subject, body, status, drafted_by) VALUES ('policy','[Demo] Updated complaints policy','We have updated our complaints and appeals policy. The new version is on the AFC website.\n\nPlease use the current version when you talk to students.','draft',$1)`, [marketing]);
+  }
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
   console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
   for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);

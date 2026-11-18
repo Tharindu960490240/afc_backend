@@ -5,6 +5,7 @@
 //   - renewal task at month 11 of each active agreement (Phase 2)
 //   - task alerts and escalation (E5-1, BR-09)
 //   - induction reminders: the day before, outcome not recorded, and the induction task due soon / overdue (Phase 3)
+//   - 6-monthly monitoring task, overdue corrective actions, unfinished broadcasts (Phase 4)
 //   - marketing material notices: retry any agent not told within the 24-hour duty (Phase 3)
 //   - safety net: an approved agent with a countersigned agreement is moved to Onboarding if that step was missed
 // Runs from node-cron on a normal server, or from GET /api/jobs/daily (Vercel Cron) on serverless hosting.
@@ -17,6 +18,7 @@ const taskRepo = require("../repositories/taskRepo");
 const calendar = require("../services/calendarService");
 const email = require("../services/emailService");
 const tasks = require("../services/taskService");
+const crm = require("../services/crmService");
 const { generateToken, hashToken } = require("../utils/tokens");
 const { ROLES } = require("../const");
 
@@ -72,6 +74,9 @@ async function run() {
     decisionTimers: await decisionTimers(),
     tasks: await tasks.runAlerts(),
     renewalTasks: await tasks.createRenewalTasks(),
+    monitoringTasks: await crm.createMonitoringTasks(),
+    correctiveAlerts: await crm.runCorrectiveAlerts(),
+    broadcasts: await crm.runBroadcastRetries(),
     induction: await require("../services/inductionService").runReminders(),
     materialNotices: await require("../services/onlineInductionService").runMaterialNotices(),
     onboardingStarted: await reconcileOnboarding(),

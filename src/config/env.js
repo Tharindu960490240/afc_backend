@@ -32,6 +32,7 @@ const env = {
   verifyTtlHours: num(process.env.EMAIL_VERIFY_TTL_HOURS, 24),
   uploadDir: process.env.UPLOAD_DIR || "storage",
   evidenceMaxMb: num(process.env.EVIDENCE_MAX_MB, 3),
+  inboundEmailSecret: process.env.INBOUND_EMAIL_SECRET, // lets the mail service post received email to /api/inbound/email so it is logged against the agent
   cronSecret: process.env.CRON_SECRET, // lets a hosting scheduler (Vercel Cron) run the daily jobs
   maxFailedLogins: num(process.env.MAX_FAILED_LOGINS, 5),
   lockoutMinutes: num(process.env.LOCKOUT_MINUTES, 15),

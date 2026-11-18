@@ -52,6 +52,31 @@ router.patch("/agents/:id/inductions/:inductionId", validate(s.inductionParams, 
 router.post("/agents/:id/inductions/:inductionId/undo", validate(s.inductionParams, "params"), validate(s.agentDelete), agents.undoInduction);
 router.post("/agents/:id/inductions/:inductionId/missed", validate(s.inductionParams, "params"), validate(s.agentDelete), agents.missedInduction);
 
+// ---- Phase 4: agent CRM ----
+const crm = require("../controllers/crmController");
+const ids = validate(s.uuidParam, "params");
+router.get("/agents/:id/communications", ids, crm.comms);
+router.post("/agents/:id/communications", ids, validate(s.commBody), crm.logComm);
+router.patch("/agents/:id/communications/:commId", validate(s.commParams, "params"), validate(s.commBody), crm.editComm);
+router.get("/agents/:id/leads", ids, crm.leads);
+router.get("/agents/:id/training", ids, crm.training);
+router.post("/agents/:id/training", ids, validate(s.trainingBody), crm.addTraining);
+router.get("/agents/:id/monitoring", ids, crm.monitoring);
+router.post("/agents/:id/monitoring", ids, validate(s.monitoringBody), crm.createReview);
+router.post("/agents/:id/corrective-actions", ids, validate(s.correctiveBody), crm.createCorrective);
+router.patch("/agents/:id/corrective-actions/:actionId", validate(s.correctiveParams, "params"), validate(s.correctiveBody), crm.updateCorrective);
+router.post("/agents/:id/corrective-actions/:actionId/redraft", validate(s.correctiveParams, "params"), crm.redraftCorrective);
+router.post("/agents/:id/corrective-actions/:actionId/send", validate(s.correctiveParams, "params"), crm.sendCorrective);
+router.post("/agents/:id/corrective-actions/:actionId/implemented", validate(s.correctiveParams, "params"), validate(s.correctiveResolve), crm.implemented);
+router.post("/agents/:id/corrective-actions/:actionId/not-implemented", validate(s.correctiveParams, "params"), validate(s.correctiveResolve), crm.notImplemented);
+router.post("/agents/:id/corrective-actions/:actionId/cancel", validate(s.correctiveParams, "params"), validate(s.agentDelete), crm.cancelCorrective);
+router.get("/broadcasts", crm.broadcasts);
+router.post("/broadcasts", validate(s.broadcastBody), crm.createBroadcast);
+router.get("/broadcasts/:id", validate(s.idOnly, "params"), crm.broadcast);
+router.patch("/broadcasts/:id", validate(s.idOnly, "params"), validate(s.broadcastBody), crm.updateBroadcast);
+router.post("/broadcasts/:id/approve", validate(s.idOnly, "params"), crm.approveBroadcast);
+router.post("/broadcasts/:id/cancel", validate(s.idOnly, "params"), crm.cancelBroadcast);
+
 // ---- Part 2: due diligence, referees, decision, agreement ----
 const idp = validate(s.uuidParam, "params");
 router.get("/agents/:id/due-diligence", idp, d.get);

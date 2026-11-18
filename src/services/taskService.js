@@ -206,6 +206,7 @@ async function complete(actor, id, { note, file }, ctx) {
   if (!canWork(actor, t0)) throw new AppError(403, "You do not have permission to do that.");
   if (t0.status !== "open") throw new AppError(409, "This task is already closed.");
   const late = t0.due_date < calendar.localDate();
+  if (t0.type === "MONITORING") throw new AppError(409, "Complete the Agent Monitoring Form on the agent record (Monitoring tab). Saving the form closes this task.");
   if (late && t0.category === "regulatory" && !isManager(actor)) {
     throw new AppError(403, "This task is past its deadline. Only a manager can close it.");
   }

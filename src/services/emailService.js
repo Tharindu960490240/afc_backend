@@ -501,6 +501,41 @@ function sendOnlineInductionComplete({ to, firstName, agentName, link }) {
     action: { text: "Open the agent record", url: link },
   });
 }
+// body text from staff: blank lines separate paragraphs
+const paras = (text) => String(text || "").split(/\n{2,}/).map((x) => x.trim()).filter(Boolean);
+function sendBroadcast({ to, firstName, subject, body, link }) {
+  return deliver(to, subject, {
+    preheader: subject,
+    title: subject,
+    greeting: `Hello ${firstName},`,
+    paragraphs: paras(body),
+    action: { text: "Open the agent portal", url: link },
+  });
+}
+function sendCorrectiveAction({ to, firstName, subject, body, link }) {
+  return deliver(to, subject, {
+    preheader: "A written notice from Australian Federation College",
+    title: subject,
+    greeting: `Hello ${firstName},`,
+    paragraphs: paras(body),
+    action: { text: "Open the agent portal", url: link },
+  });
+}
+function sendCorrectiveStaffAlert({ to, firstName, agentName, level, dueDate, link }) {
+  const overdue = level === "overdue";
+  return deliver(to, `${overdue ? "Corrective action not completed" : "Corrective action not implemented"}: ${agentName}`, {
+    preheader: agentName,
+    title: overdue ? "Corrective action overdue" : "Corrective action not implemented",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      overdue
+        ? `The corrective action notice sent to **${agentName}** was due on **${dueDate}** and has not been marked as implemented.`
+        : `The corrective action for **${agentName}** has been recorded as **not implemented**.`,
+      "Under the Education Agent Agreement, failing to carry out a corrective action is grounds for termination. Please review the agent record and decide what to do.",
+    ],
+    action: { text: "Open the agent record", url: link },
+  });
+}
 function sendMaterialUpdate({ to, firstName, title, version, category, link }) {
   return deliver(to, `New marketing material: ${title}`, {
     preheader: `${category} ${version} is now available.`,
@@ -582,7 +617,7 @@ function sendTermsReport({ to, firstName, agencyName, country, commission, bonus
 
 module.exports = {
   sendInfoRequest, sendTermsReport,
-  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder, sendAgentWelcome, sendOnlineInductionComplete, sendMaterialUpdate,
+  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder, sendAgentWelcome, sendOnlineInductionComplete, sendMaterialUpdate, sendBroadcast, sendCorrectiveAction, sendCorrectiveStaffAlert,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin, sendNewApplicationToStaff,
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,

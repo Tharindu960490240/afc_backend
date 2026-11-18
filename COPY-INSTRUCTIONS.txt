@@ -1,0 +1,5 @@
+Copy these files over your backend folder (do not delete anything).
+Then run:  npm run migrate     (adds migrations 011 to 020)
+Optional demo data: npm run reset:data  then  npm run seed:demo
+New environment variable (optional): INBOUND_EMAIL_SECRET - a long random string. Needed only for inbound email logging (POST /api/inbound/email).
+Using Gmail for inbound email logging: see docs/gmail-inbound-email.gs (setup steps at the top of the file).

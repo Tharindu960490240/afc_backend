@@ -226,3 +226,17 @@ Follows the client requirements for Phase 3. An agent works through six modules 
 
 ### Renewal task (migration 018)
 The daily job opens one "Agreement renewal review" task at month 11 of every active agreement (owner: the account manager, else Marketing).
+
+## Phase 4 update: CRM and communications (migration 020)
+Follows the client requirements for Phase 4.
+- **Communication log**: every email, call, meeting, WhatsApp, WeChat, SMS and note about an agent. Staff: `GET/POST /api/coms/agents/:id/communications`. Agents see their own log at `GET /api/agent-application/communications`. The agent sees every entry in their log (client requirement: "Agent sees all logged communications. Cannot edit or delete."), file notes included, so staff write notes accordingly.
+- **Inbound email logging**: `POST /api/inbound/email` for the mail service (forwarding or BCC address) to post received mail. It needs the header `x-inbound-secret` equal to the new environment variable `INBOUND_EMAIL_SECRET`; without the variable the endpoint is switched off. It matches the sender to an agent and is safe to repeat (same Message-ID is stored once).
+- **Agent leads**: agents log students they are talking to (`/api/agent-application/leads`); staff see them on the agent record (`/api/coms/agents/:id/leads`). Outcome: pending, submitted, enrolled, not proceeding.
+- **Training records**: `/api/coms/agents/:id/training` (staff). Shown together with induction on the agent record.
+- **Six-monthly monitoring**: `/api/coms/agents/:id/monitoring` saves the review form (applications, conversion, complaints, compliance, notes). The daily job opens a MONITORING task from 14 days before each 6-month point of the agreement until 90 days after. Only saving the review closes it; completing it from the task board returns 409.
+- **Corrective-action notices**: draft, review and edit, send, then mark implemented or not implemented (`/api/coms/agents/:id/corrective-actions`, `/send`, `/implemented`, `/not-implemented`, `/cancel`, `/redraft`). The daily job alerts the managers once when a sent notice is overdue; "not implemented" emails the Director and CEO.
+- **Broadcasts** (`/api/coms/broadcasts`): anyone with access drafts; only Admin, Director and CEO approve. Approving sends at once to active agents, records a delivery per agent and logs it in each agent's communications. The daily job retries stuck sends and records `broadcast.notice_late` if over 24 hours.
+- **Drafts** are fixed templates (`crmDrafts.js`), not AI. A person always reads and edits before anything is sent.
+- **7-year retention**: database triggers block deletion of communications, leads, training, monitoring, notices, broadcasts and agents. Records are cancelled or closed, never removed.
+- Demo data: `npm run seed:demo` now adds communications, leads, training, a monitoring review with a sent notice, and two `[Demo]` broadcasts.
+- **Using Gmail for inbound email**: `docs/gmail-inbound-email.gs` is a small Google Apps Script. It runs every 5 minutes inside one chosen Gmail or Workspace mailbox, posts the mail labelled `AFC/agents` to `/api/inbound/email` with the secret, then relabels it `AFC/logged`. Setup steps are at the top of the file. No paid service is needed. Email sent to or from an agent's address is matched to that agent; everything else is ignored.

@@ -452,7 +452,73 @@ const agentTermsSend = z.object({
   body: z.string().trim().min(10, "Write the message").max(5000),
 }).strict();
 
+
+// ---------- Phase 4: agent CRM ----------
+const crmText = (min, max, label = "This") => z.string().trim().min(min, `${label} is required`).max(max);
+const commBody = z.object({
+  type: z.enum(["email", "phone", "meeting", "note", "other"]),
+  direction: z.enum(["outbound", "inbound", "internal"]).optional(),
+  occurred_at: optional(z.string().trim().max(40)),
+  subject: optional(z.string().trim().max(200)),
+  summary: crmText(3, 8000, "A summary"),
+}).strict();
+const commParams = z.object({ id: z.string().uuid(), commId: z.string().uuid() });
+const leadBody = z.object({
+  student_name: z.string().trim().min(2, "Enter the student's name").max(160),
+  country: z.string().trim().min(2, "Enter the country").max(100),
+  course_interest: z.string().trim().min(2, "Enter the course").max(200),
+  contact_date: dateOnlyAny,
+  outcome: z.enum(["pending", "submitted", "not_proceeding"]).default("pending"),
+  notes: optional(z.string().trim().max(2000)),
+}).strict();
+const trainingBody = z.object({
+  title: z.string().trim().min(3, "Enter a title").max(200),
+  kind: z.enum(["refresher", "product_update", "compliance", "other"]).default("refresher"),
+  held_on: dateOnlyAny,
+  delivered_by: optional(z.string().trim().max(160)),
+  notes: optional(z.string().trim().max(4000)),
+}).strict();
+const monitoringBody = z.object({
+  period_start: dateOnlyAny,
+  period_end: dateOnlyAny,
+  applications_submitted: z.coerce.number().int().min(0).max(100000),
+  conversion_rate: optional(z.coerce.number().min(0).max(100)),
+  student_performance: longText(3, 4000, "A student performance summary"),
+  incidents_found: z.boolean().default(false),
+  incidents_detail: optional(z.string().trim().max(4000)),
+  unauthorised_advice_found: z.boolean().default(false),
+  unauthorised_advice_detail: optional(z.string().trim().max(4000)),
+  outcome: z.enum(["satisfactory", "issues_found"]).optional(),
+  notes: optional(z.string().trim().max(4000)),
+}).strict();
+const correctiveBody = z.object({
+  review_id: optional(z.string().uuid()),
+  issues: longText(5, 6000, "The specific issues"),
+  required_actions: longText(5, 6000, "The actions required"),
+  due_date: dateOnlyAny,
+  notice_subject: optional(z.string().trim().min(3).max(200)),
+  notice_body: optional(z.string().trim().min(20).max(12000)),
+}).strict();
+const correctiveParams = z.object({ id: z.string().uuid(), actionId: z.string().uuid() });
+const correctiveResolve = z.object({ note: longText(3, 2000, "A note") }).strict();
+const broadcastBody = z.object({
+  kind: z.enum(["product", "fee", "policy", "other"]).default("product"),
+  subject: optional(z.string().trim().min(3).max(200)),
+  body: optional(z.string().trim().min(20).max(12000)),
+  what_changed: optional(z.string().trim().max(4000)),
+  effective_date: optional(dateOnlyAny),
+}).strict();
+const inboundEmail = z.object({
+  from: z.string().trim().max(320),
+  to: z.union([z.string(), z.array(z.string())]).optional(),
+  subject: z.string().trim().max(500).optional(),
+  text: z.string().max(200000).optional(),
+  date: z.string().trim().max(60).optional(),
+  message_id: z.string().trim().max(300).optional(),
+}).strict();
+
 module.exports = {
+  commBody, commParams, leadBody, trainingBody, monitoringBody, correctiveBody, correctiveParams, correctiveResolve, broadcastBody, inboundEmail,
   userAuthorised,
   agentTermsSend,
   agentDocument, documentParams, documentReview, infoRequest, agentTerms,

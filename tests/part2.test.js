@@ -1,5 +1,6 @@
 // Integration test: COMS Block 1, Part 2 (referee verification, due diligence, decision, agreement -> onboarding, tasks).
 process.env.CRON_SECRET = "c".repeat(40);
+process.env.INBOUND_EMAIL_SECRET = "i".repeat(40);
 const { test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("fs");
@@ -423,7 +424,7 @@ test("the task board lists, filters and exports regulatory tasks; the export is 
   assert.equal((await get("/api/coms/tasks?owner=me", "compliance")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?owner=me", "ceo")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?search=delta", "compliance")).body.data.length, 5);
-  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 12);
+  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 13);
 
   const csv = await get("/api/coms/tasks/export?status=all", "compliance");
   assert.equal(csv.status, 200);
@@ -1145,4 +1146,275 @@ test("a renewal task is opened once, at month 11 of an active agreement", async 
     await pool.query(`DELETE FROM coms_tasks WHERE agreement_id=$1 AND type='RENEWAL'`, [ag.id]);
     await pool.query(`UPDATE agreements SET effective_date=$2, expires_at=$3 WHERE id=$1`, [ag.id, ag.effective_date, ag.expires_at]);
   }
+});
+
+// ================================================================== Phase 4: agent CRM and communications
+const keptForever = async (table, where = "true") =>
+  assert.rejects(pool.query(`DELETE FROM ${table} WHERE ${where}`), /kept for 7 years/);
+const asStaff = (method, p, role, body) => json(method, p, { token: T[role], body });
+const SECRET = "i".repeat(40);
+
+test("communication log: every staff role can log, the agent sees the whole log but cannot change it", async () => {
+  const ag = await agentWithLogin("Crm Comms", "a@crmcomms.in", "active");
+  const url = `/api/coms/agents/${ag.D}/communications`;
+  const call = { type: "phone", subject: "Fee question", summary: "Agent asked about the 2027 fee schedule. Sent the link." };
+  const r = await post(url, "accounts", call);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal(r.body.data.staff_name, "Accounts Test");
+  assert.equal((await post(url, "marketing", { ...call, summary: "" })).status, 400, "a summary is required");
+  assert.equal((await post(url, "marketing", { ...call, type: "pigeon" })).status, 400);
+  assert.equal((await post(url, "marketing", { ...call, occurred_at: new Date(Date.now() + 86400000 * 3).toISOString() })).status, 400, "not in the future");
+  assert.equal((await post(url, "marketing", { type: "meeting", summary: "Met at the education fair in Delhi.", occurred_at: "2026-10-01T10:30:00" })).status, 201);
+  assert.equal((await ag.as("POST", url, call)).status, 403, "an agent cannot use the staff log");
+
+  const note = await post(url, "director", { type: "note", summary: "Watch this agent: two student complaints last month." });
+  assert.equal(note.status, 201);
+  assert.equal(note.body.data.direction, "internal");
+  const staffView = (await get(url, "compliance")).body.data;
+  assert.equal(staffView.length, 3, "staff see the file note");
+
+  const mine = (await ag.as("GET", "/api/agent-application/communications")).body.data;
+  assert.equal(mine.communications.length, 3, "the agent sees every logged entry, file notes included");
+  assert.ok(JSON.stringify(mine).includes("student complaints"));
+  assert.equal((await ag.as("PATCH", `/api/agent-application/communications/${r.body.data.id}`, call)).status, 404, "no edit route for agents");
+  assert.equal((await ag.as("DELETE", `/api/agent-application/communications/${r.body.data.id}`)).status, 404, "nor delete");
+
+  // edits: the author or a director, with before and after kept
+  const own = (await post(url, "marketing", { type: "email", summary: "Sent the brochure to the agent." })).body.data;
+  assert.equal((await asStaff("PATCH", `${url}/${own.id}`, "accounts", { type: "email", summary: "Changed by someone else" })).status, 403);
+  const ed = await asStaff("PATCH", `${url}/${own.id}`, "marketing", { type: "email", summary: "Sent the 2027 brochure to the agent." });
+  assert.equal(ed.status, 200);
+  assert.ok(ed.body.data.edited_at);
+  assert.equal((await audits("agent.communication_edited", ag.D)).length, 1);
+  assert.equal((await asStaff("PATCH", `${url}/${own.id}`, "director", { type: "email", summary: "Director may also correct it." })).status, 200);
+  await keptForever("agent_communications");
+});
+
+test("inbound email is logged against the agent automatically", async () => {
+  const ag = await agentWithLogin("Crm Inbox", "a@crminbox.in", "active");
+  const hook = (body, secret = SECRET) => json("POST", "/api/inbound/email", { body, headers: { "x-inbound-secret": secret } });
+  const msg = { from: "Anil Rao <a@crminbox.in>", to: "partners@afcollege.edu.au", subject: "Question about intake dates", text: "Hello, when is the next intake for the diploma?", date: "2026-11-10T09:00:00Z", message_id: "<abc-1@mail.example>" };
+  assert.equal((await hook(msg, "wrong".padEnd(40, "x"))).status, 401, "needs the shared secret");
+  assert.equal((await json("POST", "/api/inbound/email", { body: msg })).status, 401, "no secret, no entry");
+  const ok = await hook(msg);
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal((await hook(msg)).status, 201);
+  const log = (await get(`/api/coms/agents/${ag.D}/communications`, "compliance")).body.data;
+  assert.equal(log.length, 1, "the same Message-ID is never logged twice");
+  assert.equal(log[0].direction, "inbound");
+  assert.equal(log[0].source, "inbound_email");
+  assert.equal(log[0].can_edit, false, "logged email cannot be edited");
+  assert.equal((await asStaff("PATCH", `/api/coms/agents/${ag.D}/communications/${log[0].id}`, "director", { type: "email", summary: "rewrite" })).status, 409);
+  // an email from staff to the agent is logged too, against the staff member
+  assert.equal((await hook({ from: "marketing@afc.test", to: ["a@crminbox.in"], subject: "Re: intake dates", text: "The next intake is in February.", message_id: "<abc-2@mail.example>" })).status, 201);
+  const both = (await get(`/api/coms/agents/${ag.D}/communications`, "compliance")).body.data;
+  assert.equal(both.find((c) => c.direction === "outbound").staff_name, "Marketing Test");
+  // an email from nobody we know is not guessed at
+  assert.equal((await hook({ from: "stranger@nowhere.example", to: "partners@afcollege.edu.au", subject: "Hi", text: "Hi", message_id: "<x@y>" })).status, 202);
+  assert.equal((await audits("email.unmatched")).length, 1);
+});
+
+test("leads: an agent logs and tracks their own students; no one else's, and nothing is deleted", async () => {
+  const a1 = await agentWithLogin("Crm Leads One", "a@crmleads1.in", "active");
+  const a2 = await agentWithLogin("Crm Leads Two", "a@crmleads2.in", "active");
+  const early = await agentWithLogin("Crm Early", "a@crmearly.in", "due_diligence");
+  const lead = { student_name: "Priya Sharma", country: "India", course_interest: "BSB50420 Diploma of Leadership and Management", contact_date: today(), outcome: "pending" };
+  assert.equal((await early.as("POST", "/api/agent-application/leads", lead)).status, 409, "leads open once the agent is approved");
+  assert.equal((await a1.as("POST", "/api/agent-application/leads", { ...lead, student_name: "" })).status, 400);
+  assert.equal((await a1.as("POST", "/api/agent-application/leads", { ...lead, outcome: "won" })).status, 400);
+  assert.equal((await a1.as("POST", "/api/agent-application/leads", { ...lead, contact_date: calendar.addDays(today(), 2) })).status, 400, "not in the future");
+  const r = await a1.as("POST", "/api/agent-application/leads", lead);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  const id = r.body.data.id;
+  assert.equal((await a2.as("GET", "/api/agent-application/leads")).body.data.leads.length, 0, "another agent sees none of it");
+  assert.equal((await a2.as("PATCH", `/api/agent-application/leads/${id}`, { ...lead, outcome: "submitted" })).status, 404);
+  const up = await a1.as("PATCH", `/api/agent-application/leads/${id}`, { ...lead, outcome: "submitted", notes: "Application sent in." });
+  assert.equal(up.status, 200);
+  assert.equal(up.body.data.outcome, "submitted");
+  const au = (await audits("lead.updated", id))[0];
+  assert.equal(au.before.outcome, "pending");
+  assert.equal(au.after.outcome, "submitted");
+  assert.equal((await asStaff("POST", "/api/agent-application/leads", "director", lead)).status, 403, "staff do not log leads for agents");
+  const staff = (await get(`/api/coms/agents/${a1.D}/leads`, "marketing")).body.data;
+  assert.equal(staff.length, 1);
+  assert.equal(staff[0].student_name, "Priya Sharma");
+  assert.equal((await ag2Staff(a2.D)).length, 0);
+  await keptForever("agent_leads");
+});
+const ag2Staff = async (id) => (await get(`/api/coms/agents/${id}/leads`, "marketing")).body.data;
+
+test("training records: staff add them; the induction shows too; the agent can read them", async () => {
+  const ag = await agentWithLogin("Crm Training", "a@crmtraining.in", "active");
+  await pool.query(`UPDATE agents SET induction_recorded_at = now() WHERE id=$1`, [ag.D]);
+  const url = `/api/coms/agents/${ag.D}/training`;
+  const rec = { title: "Refresher: fees and refunds 2027", kind: "refresher", held_on: today(), delivered_by: "Maya Marketing", notes: "Online, 40 minutes." };
+  assert.equal((await post(url, "accounts", rec)).status, 403);
+  assert.equal((await post(url, "marketing", { ...rec, title: "" })).status, 400);
+  assert.equal((await post(url, "marketing", { ...rec, held_on: calendar.addDays(today(), 3) })).status, 400);
+  assert.equal((await post(url, "marketing", rec)).status, 201);
+  const list = (await get(url, "compliance")).body.data;
+  assert.equal(list.length, 2);
+  assert.ok(list.some((x) => x.kind === "induction" && x.source === "system"), "the induction is listed without a second copy");
+  const mine = (await ag.as("GET", "/api/agent-application/communications")).body.data;
+  assert.equal(mine.training.length, 2);
+  await keptForever("agent_training_records");
+});
+
+test("monitoring: a task every six months from the agreement date; the form closes it; corrective notices are tracked", async () => {
+  const ag = (await pool.query(
+    `SELECT g.id, to_char(g.effective_date,'YYYY-MM-DD') AS effective_date, to_char(g.expires_at,'YYYY-MM-DD') AS expires_at, a.id AS agent_id
+       FROM agreements g JOIN agent_persons p ON p.portal_user_id = g.agent_id JOIN agents a ON a.id = p.agent_id
+      WHERE g.status='active' AND g.effective_date IS NOT NULL AND a.status IN ('active','under_review') LIMIT 1`)).rows[0];
+  assert.ok(ag, "needs an active agent with an agreement from the earlier tests");
+  const count = async () => (await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agreement_id=$1 AND type='MONITORING'`, [ag.id])).rows[0].c;
+  const monitoring = require("../src/services/crmService");
+  assert.equal(await count(), 0);
+  await monitoring.createMonitoringTasks();
+  assert.equal(await count(), 0, "not before month 6 is close");
+  await pool.query(`UPDATE agreements SET effective_date = (CURRENT_DATE - interval '6 months')::date + 5, expires_at = CURRENT_DATE + 200 WHERE id=$1`, [ag.id]);
+  assert.ok((await monitoring.createMonitoringTasks()) >= 1);
+  assert.equal(await count(), 1);
+  await monitoring.createMonitoringTasks();
+  assert.equal(await count(), 1, "one per period");
+  const task = (await pool.query(`SELECT id, owner_role, due_date FROM coms_tasks WHERE agreement_id=$1 AND type='MONITORING'`, [ag.id])).rows[0];
+  assert.equal(task.owner_role, "marketing_officer");
+
+  const done = await post(`/api/coms/tasks/${task.id}/complete`, "marketing", { note: "Done by email" });
+  assert.equal(done.status, 409, "the form, not a note, closes this task");
+  assert.match(done.body.message, /Monitoring Form/);
+
+  const url = `/api/coms/agents/${ag.agent_id}/monitoring`;
+  const ctx = (await get(url, "marketing")).body.data;
+  assert.equal(ctx.prefill.task_id, task.id);
+  const form = {
+    period_start: ag.effective_date, period_end: today(), applications_submitted: 7, conversion_rate: 42.5,
+    student_performance: "Enrolled students are attending well; two are at risk on progress.", incidents_found: false, unauthorised_advice_found: false,
+  };
+  assert.equal((await post(url, "accounts", form)).status, 403, "marketing, compliance and management complete it");
+  assert.equal((await post(url, "marketing", { ...form, student_performance: "" })).status, 400);
+  assert.equal((await post(url, "marketing", { ...form, incidents_found: true })).status, 400, "an incident needs its detail");
+  assert.equal((await post(url, "marketing", { ...form, unauthorised_advice_found: true })).status, 400, "so does unauthorised advice");
+  assert.equal((await post(url, "marketing", { ...form, period_end: calendar.addDays(today(), 5) })).status, 400, "not in the future");
+  const bad = await post(url, "marketing", { ...form, unauthorised_advice_found: true, unauthorised_advice_detail: "Told a student a visa was guaranteed." });
+  assert.equal(bad.status, 201, JSON.stringify(bad.body));
+  assert.equal(bad.body.data.review.outcome, "issues_found", "a finding forces the outcome");
+  assert.equal((await pool.query(`SELECT status FROM coms_tasks WHERE id=$1`, [task.id])).rows[0].status, "done", "saving the form closed the task");
+  const reviewId = bad.body.data.review.id;
+  assert.equal((await audits("agent.monitoring_review", ag.agent_id)).length, 1);
+
+  // corrective action: draft from the notes, staff edit and send, the agent sees it, it is tracked to the end
+  const cu = `/api/coms/agents/${ag.agent_id}/corrective-actions`;
+  const body = { review_id: reviewId, issues: "A student was told a visa was guaranteed\nTwo marketing posts used an old fee", required_actions: "Stop making visa promises\nRemove the old posts", due_date: calendar.addDays(today(), 14) };
+  assert.equal((await post(cu, "accounts", body)).status, 403);
+  assert.equal((await post(cu, "marketing", { ...body, issues: "" })).status, 400);
+  assert.equal((await post(cu, "marketing", { ...body, due_date: calendar.addDays(today(), -3) })).status, 400);
+  const cr = await post(cu, "marketing", body);
+  assert.equal(cr.status, 201, JSON.stringify(cr.body));
+  const ca = cr.body.data;
+  assert.equal(ca.status, "draft");
+  assert.match(ca.notice_body, /A student was told a visa was guaranteed/, "the notice names the specific issues");
+  assert.match(ca.notice_body, /Stop making visa promises/);
+  const agentEmail = (await pool.query(`SELECT email FROM agents WHERE id=$1`, [ag.agent_id])).rows[0].email;
+  outbox.length = 0;
+  assert.equal(mails(agentEmail, /corrective/i).length, 0, "nothing is sent while it is a draft");
+  const edit = await asStaff("PATCH", `${cu}/${ca.id}`, "marketing", { ...body, notice_body: ca.notice_body + "\n\nWe are happy to talk it through." });
+  assert.equal(edit.status, 200);
+  assert.match(edit.body.data.notice_body, /talk it through/);
+  assert.equal((await post(`${cu}/${ca.id}/redraft`, "marketing")).status, 200);
+  assert.equal((await post(`${cu}/${ca.id}/send`, "accounts")).status, 403);
+  const sent = await post(`${cu}/${ca.id}/send`, "marketing");
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.equal(sent.body.data.status, "sent");
+  assert.equal(mails(agentEmail, /corrective/i).length, 1);
+  assert.equal((await post(`${cu}/${ca.id}/send`, "marketing")).status, 409, "sent once");
+  assert.equal((await asStaff("PATCH", `${cu}/${ca.id}`, "marketing", body)).status, 409, "a sent notice cannot be rewritten");
+  const hist = (await get(`/api/coms/agents/${ag.agent_id}/communications`, "marketing")).body.data;
+  assert.ok(hist.some((c) => c.type === "corrective_action" && c.source === "system"), "the notice is in the communication log");
+
+  assert.equal((await post(`${cu}/${ca.id}/implemented`, "marketing", {})).status, 400, "a note says how it was checked");
+  // overdue: the daily job tells the managers once
+  await pool.query(`UPDATE agent_corrective_actions SET due_date = CURRENT_DATE - 2 WHERE id=$1`, [ca.id]);
+  outbox.length = 0;
+  assert.equal(await monitoring.runCorrectiveAlerts(), 1);
+  assert.equal(await monitoring.runCorrectiveAlerts(), 0, "only once");
+  assert.ok(outbox.some((m) => /corrective action not completed/i.test(m.subject)));
+  const ni = await post(`${cu}/${ca.id}/not-implemented`, "director", { note: "Posts were still online when we checked." });
+  assert.equal(ni.status, 200, JSON.stringify(ni.body));
+  assert.equal(ni.body.data.status, "not_implemented");
+  assert.equal((await post(`${cu}/${ca.id}/implemented`, "director", { note: "late change of mind" })).status, 409, "closed is closed");
+  assert.equal((await audits("corrective_action.not_implemented", ag.agent_id)).length, 1);
+
+  // a second notice goes the other way
+  const c2 = (await post(cu, "marketing", { ...body, review_id: undefined })).body.data;
+  assert.equal((await post(`${cu}/${c2.id}/cancel`, "marketing", { reason: "Raised in error" })).status, 200);
+  const c3 = (await post(cu, "marketing", body)).body.data;
+  await post(`${cu}/${c3.id}/send`, "marketing");
+  const fine = await post(`${cu}/${c3.id}/implemented`, "marketing", { note: "Checked the website and social posts on 20 Nov." });
+  assert.equal(fine.body.data.status, "implemented");
+  const mineA = (await json("GET", "/api/agent-application/communications", { token: await login(agentEmail) })).body.data;
+  assert.ok(mineA.corrective_actions.length >= 1);
+
+  await pool.query(`DELETE FROM coms_tasks WHERE agreement_id=$1 AND type='MONITORING'`, [ag.id]).catch(() => null);
+  await pool.query(`UPDATE agreements SET effective_date=$2, expires_at=$3 WHERE id=$1`, [ag.id, ag.effective_date, ag.expires_at]);
+  await keptForever("agent_monitoring_reviews");
+  await keptForever("agent_corrective_actions");
+});
+
+test("broadcasts: a person approves, the system sends to every active agent and records each delivery", async () => {
+  const a1 = await agentWithLogin("Crm Bcast One", "a@crmbc1.in", "active");
+  const a2 = await agentWithLogin("Crm Bcast Two", "a@crmbc2.in", "active");
+  const off = await agentWithLogin("Crm Bcast Off", "a@crmbcoff.in", "due_diligence");
+  const dr = await post("/api/coms/broadcasts", "marketing", { kind: "fee", what_changed: "Tuition for the Diploma of IT rises by $500\nThe application fee is unchanged", effective_date: calendar.addDays(today(), 20) });
+  assert.equal(dr.status, 201, JSON.stringify(dr.body));
+  const b = dr.body.data;
+  assert.equal(b.status, "draft");
+  assert.match(b.body, /Tuition for the Diploma of IT rises by \$500/);
+  assert.match(b.subject, /fee update/i);
+  assert.equal((await post("/api/coms/broadcasts", "accounts", { kind: "fee" })).status, 403);
+  assert.equal((await get("/api/coms/broadcasts", "accounts")).status, 403);
+  const edit = await asStaff("PATCH", `/api/coms/broadcasts/${b.id}`, "marketing", { kind: "fee", subject: "AFC fee update for 2027", body: b.body + "\n\nThank you for your continued support." });
+  assert.equal(edit.status, 200);
+  assert.equal(edit.body.data.subject, "AFC fee update for 2027");
+
+  outbox.length = 0;
+  assert.equal((await post(`/api/coms/broadcasts/${b.id}/approve`, "marketing")).status, 403, "the person who drafts it cannot send it");
+  assert.equal(outbox.length, 0, "nothing goes out before approval");
+  const ap = await post(`/api/coms/broadcasts/${b.id}/approve`, "director");
+  assert.equal(ap.status, 200, JSON.stringify(ap.body));
+  assert.equal(ap.body.data.status, "sent");
+  assert.ok(ap.body.data.delivered >= 2);
+  assert.equal(mails("a@crmbc1.in", /AFC fee update for 2027/).length, 1);
+  assert.equal(mails("a@crmbc2.in", /AFC fee update for 2027/).length, 1);
+  assert.equal(mails("a@crmbcoff.in", /AFC fee update/).length, 0, "only active agents");
+  const full = (await get(`/api/coms/broadcasts/${b.id}`, "director")).body.data;
+  assert.ok(full.deliveries.every((d) => d.sent_at), "a delivery time per agent");
+  assert.ok(full.deliveries.some((d) => d.legal_name === "Crm Bcast One"));
+  const mine = (await a1.as("GET", "/api/agent-application/communications")).body.data.communications;
+  assert.ok(mine.some((c) => c.type === "broadcast" && c.subject === "AFC fee update for 2027"), "it is in the agent's history");
+  assert.equal((await post(`/api/coms/broadcasts/${b.id}/approve`, "director")).status, 409, "approved once");
+  assert.equal((await asStaff("PATCH", `/api/coms/broadcasts/${b.id}`, "marketing", { kind: "fee", body: "x".repeat(30) })).status, 409, "a sent update is fixed");
+  assert.equal((await audits("broadcast.approved", b.id)).length, 1);
+  assert.equal((await audits("broadcast.sent", b.id)).length, 1);
+
+  // a draft can be dropped; one that crashed half way is finished by the daily job
+  const d2 = (await post("/api/coms/broadcasts", "marketing", { kind: "policy", subject: "Policy change", body: "A policy changed and the details are in this message." })).body.data;
+  assert.equal((await post(`/api/coms/broadcasts/${d2.id}/cancel`, "marketing")).body.data.status, "cancelled");
+  const d3 = (await post("/api/coms/broadcasts", "marketing", { kind: "product", subject: "New campus intake", body: "There is a new intake in February for all diplomas." })).body.data;
+  await pool.query(`UPDATE marketing_broadcasts SET status='approved', approved_at = now() - interval '26 hours' WHERE id=$1`, [d3.id]);
+  await pool.query(`UPDATE agents SET created_at = now() - interval '3 days'`);
+  outbox.length = 0;
+  assert.ok((await require("../src/services/crmService").runBroadcastRetries()) >= 2);
+  assert.equal(mails("a@crmbc1.in", /New campus intake/).length, 1);
+  assert.equal((await pool.query(`SELECT status FROM marketing_broadcasts WHERE id=$1`, [d3.id])).rows[0].status, "sent");
+  assert.equal((await audits("broadcast.notice_late", d3.id)).length, 1, "more than 24 hours is flagged");
+  assert.equal(await require("../src/services/crmService").runBroadcastRetries(), 0);
+  await keptForever("marketing_broadcasts");
+  await keptForever("marketing_broadcast_deliveries");
+});
+
+test("retention: an agent record can only be soft-deleted", async () => {
+  const ag = await agentWithLogin("Crm Keep", "a@crmkeep.in", "active");
+  await keptForever("agents", `id='${ag.D}'`);
+  assert.equal((await post(`/api/coms/agents/${ag.D}/delete`, "admin", { reason: "Entered twice by mistake" })).status, 200);
+  assert.ok((await pool.query(`SELECT deleted_at FROM agents WHERE id=$1`, [ag.D])).rows[0].deleted_at, "soft-deleted, the row stays");
 });

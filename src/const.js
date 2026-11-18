@@ -44,6 +44,16 @@ const INDUCTION_PERMS = Object.freeze({
   manageMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.MARKETING], // upload and view (Marketing implements)
   approveMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO], // approve or retire: AFC management only, not the person who uploads
 });
+// Phase 4: agent CRM. Logging a communication is open to all staff (it is a mandatory duty); the rest is limited by role.
+const CRM_PERMS = Object.freeze({
+  logComms: STAFF_ROLES,
+  editComms: [ROLES.ADMIN, ROLES.DIRECTOR],
+  training: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.MARKETING, ROLES.COMPLIANCE],
+  monitoring: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.MARKETING, ROLES.COMPLIANCE], // monitoring form, corrective notices
+  draftBroadcast: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.MARKETING],
+  approveBroadcast: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO], // approving sends it to every active agent
+});
+const COMM_TYPES = Object.freeze({ email: "Email", phone: "Phone call", meeting: "Meeting", note: "Note", broadcast: "Update broadcast", corrective_action: "Corrective action", other: "Other" });
 const MATERIAL_CATEGORIES = Object.freeze({ brochure: "Brochure", fees: "Fees", policy: "Policy", course_guide: "Course guide", other: "Other" });
 
 const AGENT_PERMS = Object.freeze({
@@ -84,6 +94,7 @@ const TASK_TYPES = Object.freeze({
   WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.ADMIN },
   S21B_REQUEST: { category: "regulatory", label: "Section 21B request", ownerRole: ROLES.COMPLIANCE },
   INDUCTION: { category: "general", label: "Agent induction and staff training", ownerRole: ROLES.MARKETING },
+  MONITORING: { category: "general", label: "6-monthly agent monitoring", ownerRole: ROLES.MARKETING },
   RENEWAL: { category: "general", label: "Agreement renewal review", ownerRole: ROLES.MARKETING },
   COMMISSION_REPORT: { category: "general", label: "Report commission and bonus to Accounts", ownerRole: ROLES.MARKETING },
   GENERAL: { category: "general", label: "Task", ownerRole: null },
@@ -144,6 +155,6 @@ const DOC_STATUS = Object.freeze(["received", "accepted", "needs_update"]);
 
 module.exports = {
   ROLES, ROLE_LIST, STAFF_ROLES, INVITE_PERMISSIONS, PASSWORD_REGEX,
-  AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, INDUCTION_PERMS, MATERIAL_CATEGORIES, AGENT_TRANSITIONS,
+  AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, INDUCTION_PERMS, MATERIAL_CATEGORIES, CRM_PERMS, COMM_TYPES, AGENT_TRANSITIONS,
   REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS, DOC_KINDS, REQUIRED_DOC_KINDS, DOC_STATUS,
 };
