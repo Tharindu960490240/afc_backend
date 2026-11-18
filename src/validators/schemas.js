@@ -292,6 +292,7 @@ const milestone = z.object({ type: z.enum(["prisms", "induction", "sms_contact"]
 const timeOfDay = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use the format HH:MM");
 const inductionBody = z.object({
   outcome: z.enum(["held", "scheduled"]),
+  online_confirmation: z.boolean().optional(),
   held_on: optional(dateOnly),
   scheduled_for: optional(dateOnly),
   conducted_by: optional(z.coerce.number().int().positive()),
@@ -308,6 +309,10 @@ const inductionReschedule = z.object({
   scheduled_for: dateOnly, conducted_by: optional(z.coerce.number().int().positive()), mode: optional(z.enum(["online", "in_person", "phone"])),
   start_time: optional(timeOfDay), meeting_url: optional(z.string().trim().url("Enter a full link starting with https://").max(500)), location: optional(z.string().trim().max(300)),
 }).strict();
+const inductionModuleBody = z.object({ title: z.string().trim().min(3).max(160), body: z.string().trim().min(20).max(20000) }).strict();
+const policyBody = z.object({ version: z.string().trim().min(1).max(40), title: z.string().trim().min(3).max(200), body: z.string().trim().min(20).max(40000), document_url: optional(z.string().trim().url().max(500)) }).strict();
+const idOnly = z.object({ id: z.string().uuid() });
+const ppAcknowledge = z.object({ version_id: z.string().uuid() }).strict();
 const inductionParams = z.object({ id: z.string().uuid(), inductionId: z.string().uuid() });
 const csvBool = z.enum(["true", "false"]).transform((v) => v === "true");
 const comsAgentsQuery = z.object({
@@ -420,6 +425,11 @@ const auditQuery = z.object({
 
 // agent folder: documents, requests for information, commission and bonus (Part 2b)
 const uploadFile = z.object({ name: z.string().trim().min(1).max(255), data: z.string().min(10) }).strict();
+const materialBody = z.object({
+  title: z.string().trim().min(3).max(200), description: optional(z.string().trim().max(2000)),
+  category: optional(z.enum(["brochure", "fees", "policy", "course_guide", "other"])), version: optional(z.string().trim().min(1).max(40)),
+  file: uploadFile, approve: z.boolean().optional(),
+}).strict();
 const agentDocument = z.object({
   kind: z.string().trim().min(1).max(60), // checked against the document types in Settings
   label: z.string().trim().max(160).optional(),
@@ -447,7 +457,7 @@ module.exports = {
   agentTermsSend,
   agentDocument, documentParams, documentReview, infoRequest, agentTerms,
   createAgentEoi, updateAgent, agentStatusChange, agentDelete, createPerson, updatePerson, milestone,
-  comsAgentsQuery, uuidParam, personParams, inductionBody, inductionComplete, inductionEdit, inductionReschedule, inductionParams, holidayBody, auditQuery,
+  comsAgentsQuery, uuidParam, personParams, inductionModuleBody, policyBody, materialBody, idOnly, ppAcknowledge, inductionBody, inductionComplete, inductionEdit, inductionReschedule, inductionParams, holidayBody, auditQuery,
   upload, createReferee, updateReferee, refereeParams, checkParams, phoneCheck, referenceOutcome, referenceAnswers,
   dueDiligenceCheck, declarations, decision, sendAgentAgreement, taskCreate, taskComplete, taskAssign, tasksQuery, publicToken, fileParams, cancelTask,
   login, forgotPassword, resetPassword, changePassword, updateProfile,

@@ -171,6 +171,12 @@ async function onAgreementCountersigned(agreementId, actor, ctx) {
     }, client);
     return tasks;
   });
+  // Phase 3: the welcome email goes out when the agreement is executed, with the way into the online induction
+  if (created.length) {
+    const u = await repo.userById(ag.user_id);
+    const ag2 = await agentRepo.findById(found.id);
+    if (u?.email) email.sendAgentWelcome({ to: u.email, firstName: u.first_name, agencyName: ag2?.legal_name || "your agency", link: `${env.frontendUrl}/agent/induction` });
+  }
   // step 6: everyone in the responsible team hears about it (for example the CoE administrators), not only the first owner
   for (const t of created) {
     const team = (await repo.usersWithRoles([t.role])).map((u) => u.id);
@@ -288,6 +294,33 @@ async function exportCsv(actor, q, ctx) {
 }
 
 // ---------- reminders and escalation (daily job) ----------
+// Month 11 of an active agreement: open one renewal task per agreement (owner: the account manager, else marketing)
+async function createRenewalTasks() {
+  const rows = (await require("../config/db").query(
+    `SELECT ag.id AS agreement_id, a.id AS agent_id, a.legal_name, a.account_manager_id,
+            to_char(ag.expires_at,'YYYY-MM-DD') AS expires_at
+       FROM agreements ag
+       JOIN agent_persons p ON p.portal_user_id = ag.agent_id AND p.deleted_at IS NULL
+       JOIN agents a ON a.id = p.agent_id AND a.deleted_at IS NULL AND a.status IN ('active','under_review')
+      WHERE ag.status = 'active' AND ag.effective_date IS NOT NULL
+        AND ag.effective_date + interval '11 months' <= CURRENT_DATE AND ag.expires_at >= CURRENT_DATE
+        AND NOT EXISTS (SELECT 1 FROM coms_tasks t WHERE t.agreement_id = ag.id AND t.type = 'RENEWAL' AND t.deleted_at IS NULL)
+      GROUP BY ag.id, a.id`)).rows;
+  const today = calendar.localDate();
+  const role = roleFor("RENEWAL") || TASK_TYPES.RENEWAL.ownerRole;
+  let n = 0;
+  for (const r of rows) {
+    const ownerId = await repo.ownerFor(role, r.account_manager_id);
+    const id = await repo.insert(require("../config/db"), {
+      category: "general", type: "RENEWAL", title: `Review the agreement renewal for ${r.legal_name}`, agentId: r.agent_id, agreementId: r.agreement_id,
+      triggerEvent: "agreement_month_11", triggerDate: today, dueDate: r.expires_at, dueBasis: "calendar", ownerId, ownerRole: role, actorId: null,
+      description: `The agreement ends on ${r.expires_at}. Decide whether to renew, then send the renewal agreement from the agent record.`,
+    });
+    if (id) n++;
+  }
+  return n;
+}
+
 async function runAlerts() {
   const today = calendar.localDate();
   const counts = { warned: 0, escalated: 0 };
@@ -314,5 +347,5 @@ async function runAlerts() {
 
 module.exports = {
   list, forAgent, meta, create, createOnboardingTasks, createTerminationTasks, onAgreementCountersigned, maybeActivate, complete, assign, cancel,
-  openEvidence, exportCsv, runAlerts, canWork,
+  openEvidence, exportCsv, runAlerts, canWork, createRenewalTasks,
 };

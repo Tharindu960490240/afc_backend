@@ -212,3 +212,14 @@ Run `npm run migrate` (adds 011, 012, 013).
 ### Correcting an induction (migration 016)
 - `PATCH /api/coms/agents/:id/inductions/:inductionId` edits a held induction (date, who ran it, how, attendees, notes). Admin, marketing officer or director. Audited with before and after; the "induction recorded" date follows the latest held record.
 - `POST .../:inductionId/undo` (director or administrator, reason required) marks a held induction as undone. If it was the only one, the milestone is cleared and the finished induction task opens again. An agent who is already Active is not demoted: the response carries a warning.
+
+### Online induction, policies and materials (migration 017)
+Follows the client requirements for Phase 3. An agent works through six modules in order, then acknowledges the current Policies and Procedures (PP). Staff confirm the induction (agent record, Onboarding tasks, "Confirm the online induction"), which opens the student-application part of the portal.
+- Completions and PP acknowledgements are evidence: server time, IP, browser, no edits or deletes (database triggers).
+- Staff edit modules and publish PP versions at Induction and materials. A new PP version asks agents to acknowledge again.
+- Marketing materials are drafts until approved; approving emails every active agent.
+- Safety net for the 24-hour notice duty: the daily job re-sends the notice to any active agent who was not told about an approved material, and records `material.notice_late` in the audit trail if it was more than 24 hours after approval.
+- The module, PP and starter-material wording is placeholder text for AFC to review and replace.
+
+### Renewal task (migration 018)
+The daily job opens one "Agreement renewal review" task at month 11 of every active agreement (owner: the account manager, else Marketing).

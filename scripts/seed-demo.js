@@ -53,6 +53,13 @@ const AGENTS = [
 ];
 
 async function remove() {
+  // online-induction completions and acknowledgements are evidence (guarded by triggers): lift the guard only for the demo agents
+  const demo = "(SELECT id FROM agents WHERE email LIKE '%@demo.example')";
+  for (const t of ["induction_completions", "pp_acknowledgements"]) {
+    await pool.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
+    try { await pool.query(`DELETE FROM ${t} WHERE agent_id IN ${demo}`); } finally { await pool.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`); }
+  }
+  await pool.query(`DELETE FROM marketing_material_deliveries WHERE agent_id IN ${demo}`);
   await pool.query("DELETE FROM agent_inductions WHERE agent_id IN (SELECT id FROM agents WHERE email LIKE '%@demo.example')");
   const r = await pool.query("DELETE FROM agents WHERE email LIKE '%@demo.example' RETURNING id");
   const u = await pool.query("DELETE FROM users WHERE email LIKE '%@demo.example'");
@@ -234,6 +241,23 @@ async function main() {
     { status: "missed", mode: "online", scheduled: -6, time: "14:00", url: "https://teams.microsoft.com/l/meetup-join/demo-lotus", by: marketing, reason: "The agent did not join the call and did not reply to our email.", created: -9 },
     { status: "scheduled", mode: "phone", scheduled: 5, time: "11:00", where: "+91 98765 43210", by: marketing, created: -5 },
   ]);
+  // online induction (Phase 3): Golden Gate finished and confirmed; Pacific Rim finished and is waiting for staff to confirm; Lotus is half way
+  const online = async (email, count, ack, daysAgo) => {
+    const a = (await pool.query("SELECT a.id, p.portal_user_id AS uid FROM agents a LEFT JOIN agent_persons p ON p.agent_id = a.id AND p.portal_user_id IS NOT NULL WHERE a.email=$1 LIMIT 1", [email])).rows[0];
+    if (!a || (await pool.query("SELECT 1 FROM induction_completions WHERE agent_id=$1 LIMIT 1", [a.id])).rowCount) return;
+    const mods = (await pool.query("SELECT id, version FROM induction_modules WHERE active ORDER BY position LIMIT $1", [count])).rows;
+    let i = 0;
+    for (const m of mods) {
+      await pool.query(`INSERT INTO induction_completions (agent_id, module_id, module_version, user_id, completed_at, ip, user_agent) VALUES ($1,$2,$3,$4,$5,'203.0.113.10','Demo browser')`,
+        [a.id, m.id, m.version, a.uid, ts(daysAgo + i * 0.01)]);
+      i++;
+    }
+    const pp = ack && (await pool.query("SELECT id, version FROM pp_versions WHERE is_current")).rows[0];
+    if (pp) await pool.query(`INSERT INTO pp_acknowledgements (agent_id, user_id, pp_version_id, pp_version, acknowledged_at, ip, user_agent) VALUES ($1,$2,$3,$4,$5,'203.0.113.10','Demo browser')`, [a.id, a.uid, pp.id, pp.version, ts(daysAgo + 0.1)]);
+  };
+  await online("goldengate@demo.example", 99, true, -74);
+  await online("pacificrim@demo.example", 99, true, -1);
+  await online("lotus@demo.example", 3, false, -2);
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
   console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
   for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);

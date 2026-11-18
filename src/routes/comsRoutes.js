@@ -28,6 +28,19 @@ router.post("/agents/:id/persons", validate(s.uuidParam, "params"), validate(s.c
 router.patch("/agents/:id/persons/:personId", validate(s.personParams, "params"), validate(s.updatePerson), agents.updatePerson);
 router.post("/agents/:id/persons/:personId/delete", validate(s.personParams, "params"), validate(s.agentDelete), agents.removePerson);
 
+// ---- Phase 3: online induction content, policies and marketing materials ----
+const oi = require("../controllers/onlineInductionController");
+router.get("/induction/modules", oi.modules);
+router.patch("/induction/modules/:id", validate(s.idOnly, "params"), validate(s.inductionModuleBody), oi.updateModule);
+router.get("/induction/policies", oi.policies);
+router.post("/induction/policies", validate(s.policyBody), oi.publishPolicy);
+router.get("/induction/materials", oi.materials);
+router.post("/induction/materials", limits.sensitive, validate(s.materialBody), oi.createMaterial);
+router.post("/induction/materials/:id/approve", validate(s.idOnly, "params"), oi.approveMaterial);
+router.post("/induction/materials/:id/retire", validate(s.idOnly, "params"), oi.retireMaterial);
+router.get("/induction/materials/:id/download", limits.sensitive, validate(s.idOnly, "params"), oi.materialDownload);
+router.get("/agents/:id/online-induction", validate(s.uuidParam, "params"), oi.status);
+
 // ---- Phase 3: induction ----
 router.get("/agents/:id/inductions", validate(s.uuidParam, "params"), agents.inductions);
 router.post("/agents/:id/inductions", validate(s.uuidParam, "params"), validate(s.inductionBody), agents.recordInduction);

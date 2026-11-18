@@ -475,6 +475,45 @@ function sendTaskAssigned({ to, firstName, title, agentName, dueDate, link }) {
   });
 }
 
+// Phase 3: online induction
+function sendAgentWelcome({ to, firstName, agencyName, link }) {
+  return deliver(to, `Welcome to ${require("../emails/college").name}`, {
+    preheader: "Your agreement is signed. Next, complete your induction.",
+    title: "Welcome, your agreement is signed",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `Welcome to ${require("../emails/college").name}. The agreement with **${agencyName}** is now fully signed.`,
+      "Your next step is the online induction in the agent portal: six short modules, then you acknowledge our policies and procedures. You sign in with the email address and password you registered with.",
+      "Once the college confirms your induction, the rest of the portal opens, including the marketing materials.",
+    ],
+    action: { text: "Start my induction", url: link },
+  });
+}
+function sendOnlineInductionComplete({ to, firstName, agentName, link }) {
+  return deliver(to, `Induction modules finished: ${agentName}`, {
+    preheader: `${agentName} finished the induction modules.`,
+    title: "An agent finished the induction modules",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `**${agentName}** has completed all the online induction modules.`,
+      "Please check the record and confirm the induction once they have also acknowledged the policies. The agent's portal stays limited until you do.",
+    ],
+    action: { text: "Open the agent record", url: link },
+  });
+}
+function sendMaterialUpdate({ to, firstName, title, version, category, link }) {
+  return deliver(to, `New marketing material: ${title}`, {
+    preheader: `${category} ${version} is now available.`,
+    title: "New marketing material",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `AFC has approved a new ${category.toLowerCase()}: **${title}** (version ${version}).`,
+      "Please use this version from now on. You can download it from the agent portal.",
+    ],
+    action: { text: "Open the agent portal", url: link },
+  });
+}
+
 // Phase 3: induction
 const inductionWhen = ({ date, time }) => `**${date}**${time ? ` at **${time}**` : ""}`;
 const inductionHow = ({ mode, meetingUrl, location }) =>
@@ -543,7 +582,7 @@ function sendTermsReport({ to, firstName, agencyName, country, commission, bonus
 
 module.exports = {
   sendInfoRequest, sendTermsReport,
-  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder,
+  sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder, sendAgentWelcome, sendOnlineInductionComplete, sendMaterialUpdate,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin, sendNewApplicationToStaff,
   sendAgentApproved, sendAgentRejected,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,

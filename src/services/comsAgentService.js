@@ -92,7 +92,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
   need(actor, "read");
   const a = await repo.findById(id);
   if (!a || (a.deleted_at && (!includeDeleted || !allowed(actor, "restore")))) throw new AppError(404, "Agent not found.");
-  const [persons, referees, history, agreements, signed, activity, tasks, docs, inductions] = await Promise.all([
+  const [persons, referees, history, agreements, signed, activity, tasks, docs, inductions, online] = await Promise.all([
     repo.persons(id),
     repo.referees(id),
     repo.history(id),
@@ -102,6 +102,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     require("./taskService").forAgent(id),
     require("./agentDocumentService").checklistState(id),
     require("./inductionService").list(id),
+    require("./onlineInductionService").statusFor(id, a),
   ]);
   const base = shape(a);
   return {
@@ -114,6 +115,7 @@ async function getDetail(actor, id, { includeDeleted = true } = {}) {
     has_signed_agreement: signed,
     tasks,
     inductions,
+    online_induction: online,
     documents: docs.docs,
     documents_required: docs.required,
     documents_complete: docs.complete,

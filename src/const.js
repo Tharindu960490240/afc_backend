@@ -37,6 +37,14 @@ const RISK_RATINGS = Object.freeze(["low", "medium", "high"]);
 const PERSON_ROLES = Object.freeze(["director", "staff", "sub_agent"]);
 
 // Who may do what with the agent register (NF-03)
+// Online induction (Phase 3)
+const INDUCTION_PERMS = Object.freeze({
+  manageModules: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.COMPLIANCE, ROLES.MARKETING],
+  publishPolicy: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO, ROLES.COMPLIANCE],
+  manageMaterials: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING],
+});
+const MATERIAL_CATEGORIES = Object.freeze({ brochure: "Brochure", fees: "Fees", policy: "Policy", course_guide: "Course guide", other: "Other" });
+
 const AGENT_PERMS = Object.freeze({
   read: STAFF_ROLES,
   create: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.MARKETING],
@@ -75,6 +83,7 @@ const TASK_TYPES = Object.freeze({
   WEBSITE_REMOVE: { category: "regulatory", label: "Remove agent from the website list", ownerRole: ROLES.ADMIN },
   S21B_REQUEST: { category: "regulatory", label: "Section 21B request", ownerRole: ROLES.COMPLIANCE },
   INDUCTION: { category: "general", label: "Agent induction and staff training", ownerRole: ROLES.MARKETING },
+  RENEWAL: { category: "general", label: "Agreement renewal review", ownerRole: ROLES.MARKETING },
   COMMISSION_REPORT: { category: "general", label: "Report commission and bonus to Accounts", ownerRole: ROLES.MARKETING },
   GENERAL: { category: "general", label: "Task", ownerRole: null },
 });
@@ -134,6 +143,6 @@ const DOC_STATUS = Object.freeze(["received", "accepted", "needs_update"]);
 
 module.exports = {
   ROLES, ROLE_LIST, STAFF_ROLES, INVITE_PERMISSIONS, PASSWORD_REGEX,
-  AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, AGENT_TRANSITIONS,
+  AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, INDUCTION_PERMS, MATERIAL_CATEGORIES, AGENT_TRANSITIONS,
   REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS, DOC_KINDS, REQUIRED_DOC_KINDS, DOC_STATUS,
 };

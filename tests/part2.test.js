@@ -72,6 +72,11 @@ let A; // the main agent (Delta Education)
 before(async () => {
   await pool.query("TRUNCATE agreements, audit_logs, password_resets, invitations, student_profiles, agent_profiles, users RESTART IDENTITY CASCADE");
   await require("./form2").restoreSettings(pool);
+  // Phase 3 content: start every run from the starter modules and policy (TRUNCATE skips the evidence guard triggers)
+  await pool.query("TRUNCATE pp_acknowledgements, induction_completions, marketing_material_deliveries, marketing_materials");
+  await pool.query("DELETE FROM pp_versions WHERE version <> '1.0'");
+  await pool.query("UPDATE pp_versions SET is_current = (version = '1.0')");
+  await pool.query("UPDATE induction_modules SET version = 1, title = 'AFC courses and campuses' WHERE position = 1");
   fs.rmSync(path.resolve(env.uploadDir, "coms"), { recursive: true, force: true });
   const hash = await hashPassword(PW);
   const staff = [
@@ -353,6 +358,10 @@ test("an agreement is sent from the agent record, signed by the agent, countersi
   assert.equal(approved[0].attachments.length, 2);
   assert.ok(approved[0].attachments.some((f) => /Certificate of Appointment\.pdf$/.test(f.filename)));
   assert.ok(approved[0].attachments.every((f) => f.size > 20000));
+  const welcome = mails("owner@delta.in", /welcome to/i);
+  assert.equal(welcome.length, 1, "Phase 3: the welcome email goes out when the agreement is executed");
+  assert.match(welcome[0].text, /induction/i);
+  assert.doesNotMatch(welcome[0].text, /password:/i, "no credentials are emailed");
   assert.equal(mails("ceo@x.com", /signed agreement/i).length + outbox.filter((m) => /^Signed agreement:/.test(m.subject)).length >= 1, true);
   assert.ok((await pool.query("SELECT certificate_sent_at FROM agents WHERE id=$1", [A])).rows[0].certificate_sent_at, "certificate marked as sent");
   const early = await json("GET", "/api/agent-application/certificate", { token: agentT });
@@ -414,7 +423,7 @@ test("the task board lists, filters and exports regulatory tasks; the export is 
   assert.equal((await get("/api/coms/tasks?owner=me", "compliance")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?owner=me", "ceo")).body.data.length, 1);
   assert.equal((await get("/api/coms/tasks?search=delta", "compliance")).body.data.length, 5);
-  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 11);
+  assert.equal((await get("/api/coms/tasks/meta", "compliance")).body.data.types.length, 12);
 
   const csv = await get("/api/coms/tasks/export?status=all", "compliance");
   assert.equal(csv.status, 200);
@@ -930,4 +939,207 @@ test("induction: undoing when another held record stands keeps the milestone; an
   assert.equal(u2.status, 200);
   assert.match(u2.body.data.warning, /already Active/);
   assert.equal((await pool.query(`SELECT status FROM agents WHERE id=$1`, [D])).rows[0].status, "active", "not demoted automatically");
+});
+
+// ------------------------------------------------------------------ Phase 3 (requirements document): online induction
+async function agentWithLogin(name, email, status = "onboarding") {
+  const D = await applied(name, email); // the person who registered is the agent's portal user
+  await pool.query(`UPDATE agents SET status=$2 WHERE id=$1`, [D, status]);
+  await pool.query(`UPDATE users SET status='active' WHERE lower(email)=lower($1)`, [email]);
+  const u = (await pool.query(`SELECT id FROM users WHERE lower(email)=lower($1)`, [email])).rows[0].id;
+  const tok = await login(email);
+  assert.ok(tok, "the agent can sign in");
+  return { D, u, tok, as: (method, p, body) => json(method, p, { token: tok, body }) };
+}
+const finishModules = async (a) => {
+  const mods = (await a.as("GET", "/api/agent-application/online-induction")).body.data.modules;
+  for (const m of mods) assert.equal((await a.as("POST", `/api/agent-application/online-induction/modules/${m.id}/complete`)).status, 200);
+};
+
+test("online induction: six modules in order, with the IP recorded and staff told on the last one", async () => {
+  const early = await agentWithLogin("Early Edu", "a@early.in", "due_diligence");
+  assert.equal((await early.as("GET", "/api/agent-application/online-induction")).body.data.eligible, false, "opens only once approved");
+
+  const A1 = await agentWithLogin("Online One", "a@onlineone.in");
+  const v = (await A1.as("GET", "/api/agent-application/online-induction")).body.data;
+  assert.equal(v.eligible, true);
+  assert.equal(v.modules.length, 6);
+  assert.equal(v.stage, "not_started");
+  assert.equal(v.modules[0].locked, false);
+  assert.ok(v.modules[0].body, "the first module can be read");
+  assert.equal(v.modules[1].locked, true);
+  assert.equal(v.modules[1].body, null, "later modules stay closed until the earlier ones are done");
+
+  const done = (m) => A1.as("POST", `/api/agent-application/online-induction/modules/${m.id}/complete`);
+  assert.equal((await done(v.modules[1])).status, 409, "cannot skip ahead");
+  assert.equal((await done(v.modules[0])).status, 200);
+  assert.equal((await done(v.modules[0])).status, 409, "once only");
+  outbox.length = 0;
+  for (const m of v.modules.slice(1)) assert.equal((await done(m)).status, 200);
+  const after = (await A1.as("GET", "/api/agent-application/online-induction")).body.data;
+  assert.equal(after.modules_completed, 6);
+  assert.equal(after.stage, "awaiting_policy");
+  assert.ok(mails("marketing@afc.test", /induction modules finished/i).length === 1, "marketing is told when the last module is done");
+  const row = (await pool.query(`SELECT ip, module_version FROM induction_completions WHERE agent_id=$1 LIMIT 1`, [A1.D])).rows[0];
+  assert.ok(row.ip, "the IP address is stored");
+  await assert.rejects(pool.query(`UPDATE induction_completions SET completed_at = now() - interval '9 days' WHERE agent_id=$1`, [A1.D]), /evidence/, "evidence cannot be changed");
+  await assert.rejects(pool.query(`DELETE FROM induction_completions WHERE agent_id=$1`, [A1.D]), /evidence/, "or deleted");
+  assert.equal((await get("/api/agent-application/online-induction", "marketing")).status, 403, "agents only");
+});
+
+test("online induction: policy acknowledgement records agent, server time, IP and version, and cannot be changed", async () => {
+  const A2 = await agentWithLogin("Online Two", "a@onlinetwo.in");
+  const pp = (await A2.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  assert.ok(pp.body.length > 50);
+  assert.equal((await A2.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id })).status, 409, "modules first");
+  await finishModules(A2);
+  assert.equal((await A2.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: "00000000-0000-4000-8000-000000000000" })).status, 409, "must be the current version");
+  assert.equal((await A2.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id, acknowledged_at: "2020-01-01" })).status, 400, "no client time is accepted (cannot be backdated)");
+  const before = Date.now();
+  const ack = await A2.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  assert.equal(ack.status, 200, JSON.stringify(ack.body));
+  assert.equal(ack.body.data.stage, "awaiting_staff");
+  assert.equal(ack.body.data.can_acknowledge, false);
+  const r = (await pool.query(`SELECT * FROM pp_acknowledgements WHERE agent_id=$1`, [A2.D])).rows[0];
+  assert.equal(r.pp_version, "1.0");
+  assert.ok(r.ip);
+  assert.equal(r.user_id, String(A2.u));
+  assert.ok(Math.abs(new Date(r.acknowledged_at).getTime() - before) < 20000, "the server clock is used");
+  assert.equal((await A2.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id })).status, 409, "once per version");
+  await assert.rejects(pool.query(`UPDATE pp_acknowledgements SET pp_version='9.9' WHERE agent_id=$1`, [A2.D]), /evidence/);
+  await assert.rejects(pool.query(`DELETE FROM pp_acknowledgements WHERE agent_id=$1`, [A2.D]), /evidence/);
+  assert.equal((await audits("agent.pp_acknowledged", A2.D)).length, 1);
+  const staff = (await get(`/api/coms/agents/${A2.D}/online-induction`, "marketing")).body.data;
+  assert.equal(staff.pp_acknowledged_version, "1.0");
+  assert.ok(staff.pp_acknowledged_ip);
+});
+
+test("induction gate: open only after modules, policy acknowledgement AND staff confirmation; enforced in the API", async () => {
+  const svc = require("../src/services/onlineInductionService");
+  const A3 = await agentWithLogin("Online Three", "a@onlinethree.in");
+  const user = { id: A3.u, role: "agent" };
+  await assert.rejects(svc.assertUnlocked(user), /complete your induction/i, "locked at the start");
+  await finishModules(A3);
+  const pp = (await A3.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  const url = `/api/coms/agents/${A3.D}/inductions`;
+  assert.equal((await post(url, "marketing", { outcome: "held", online_confirmation: true })).status, 409, "staff cannot confirm before the policy is acknowledged");
+  await A3.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  await assert.rejects(svc.assertUnlocked(user), /complete your induction/i, "still locked: staff have not confirmed");
+  assert.equal((await post(url, "accounts", { outcome: "held", online_confirmation: true })).status, 403);
+  const c = await post(url, "marketing", { outcome: "held", online_confirmation: true });
+  assert.equal(c.status, 201, JSON.stringify(c.body));
+  assert.equal(c.body.data.mode, "online");
+  assert.ok((await pool.query(`SELECT induction_recorded_at FROM agents WHERE id=$1`, [A3.D])).rows[0].induction_recorded_at);
+  assert.equal((await svc.assertUnlocked(user)).id, A3.D, "open now");
+  const mine = (await A3.as("GET", "/api/agent-application/online-induction")).body.data;
+  assert.equal(mine.stage, "complete");
+  assert.equal(mine.unlocked, true);
+});
+
+async function runMaterialNoticesCheck(id) {
+  const onl = require("../src/services/onlineInductionService");
+  const before = (await onl.runMaterialNotices());
+  const nothingYet = before.sent === 0;
+  // pretend approval was 26 hours ago and one agent's notice was lost
+  await pool.query(`UPDATE marketing_materials SET approved_at = now() - interval '26 hours' WHERE id=$1`, [id]);
+  await pool.query(`UPDATE agents SET created_at = now() - interval '3 days' WHERE status = 'active'`);
+  const gone = (await pool.query(`DELETE FROM marketing_material_deliveries WHERE material_id=$1 AND agent_id = (SELECT min(agent_id::text)::uuid FROM marketing_material_deliveries WHERE material_id=$1) RETURNING agent_id`, [id])).rowCount;
+  assert.equal(gone, 1);
+  const r = await onl.runMaterialNotices();
+  assert.equal(r.sent, 1, "the lost notice is sent again");
+  assert.equal(r.late, 1);
+  assert.equal((await audits("material.notice_late", id)).length, 1);
+  assert.equal((await onl.runMaterialNotices()).sent, 0, "and only once");
+  return { nothingYet };
+}
+
+test("marketing materials: hidden until approved, agents are told once, only after the induction gate", async () => {
+  const unlocked = await agentWithLogin("Online Four", "a@onlinefour.in", "active");
+  await finishModules(unlocked);
+  const pp = (await unlocked.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  await unlocked.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  await post(`/api/coms/agents/${unlocked.D}/inductions`, "marketing", { outcome: "held", online_confirmation: true });
+  const locked = await agentWithLogin("Online Five", "a@onlinefive.in", "active");
+
+  const body = { title: "2027 course guide", description: "All courses and campuses", category: "course_guide", version: "2.0", file: pdf(500) };
+  assert.equal((await post("/api/coms/induction/materials", "accounts", body)).status, 403);
+  assert.equal((await post("/api/coms/induction/materials", "marketing", { ...body, file: { name: "x.exe", data: "AAAAAAAAAAAA" } })).status, 400, "file type is checked");
+  const up = await post("/api/coms/induction/materials", "marketing", body);
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  assert.equal(up.body.data.status, "draft");
+  const id = up.body.data.id;
+  assert.equal((await unlocked.as("GET", "/api/agent-application/materials")).body.data.materials.length, 0, "a draft is not visible to agents");
+  assert.equal((await unlocked.as("GET", `/api/agent-application/materials/${id}/download`)).status, 404, "nor downloadable");
+
+  outbox.length = 0;
+  assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "accounts")).status, 403);
+  const ap = await post(`/api/coms/induction/materials/${id}/approve`, "marketing");
+  assert.equal(ap.status, 200, JSON.stringify(ap.body));
+  assert.equal(ap.body.data.status, "approved");
+  assert.ok(ap.body.data.notified >= 2, "active agents were notified");
+  assert.ok(mails("a@onlinefour.in", /new marketing material/i).length === 1);
+  assert.ok(mails("a@onlinefive.in", /new marketing material/i).length === 1);
+  assert.equal((await post(`/api/coms/induction/materials/${id}/approve`, "marketing")).status, 409, "approved once");
+
+  // safety net: a notice that never went out is sent by the daily job, and one older than 24 hours is flagged in the audit trail
+  const first = await runMaterialNoticesCheck(id);
+  assert.equal(first.nothingYet, true, "within the first hour the daily job leaves it to the approval");
+  const list = (await unlocked.as("GET", "/api/agent-application/materials")).body.data;
+  assert.equal(list.unlocked, true);
+  assert.equal(list.materials.length, 1);
+  const dl = await fetch(`${base}/api/agent-application/materials/${id}/download`, { headers: { Authorization: `Bearer ${unlocked.tok}` } });
+  assert.equal(dl.status, 200);
+  // not through the gate yet: no list, no download
+  assert.deepEqual((await locked.as("GET", "/api/agent-application/materials")).body.data, { unlocked: false, materials: [] });
+  assert.equal((await locked.as("GET", `/api/agent-application/materials/${id}/download`)).status, 403);
+
+  assert.equal((await post(`/api/coms/induction/materials/${id}/retire`, "marketing")).status, 200);
+  assert.equal((await unlocked.as("GET", "/api/agent-application/materials")).body.data.materials.length, 0, "retired material disappears");
+  assert.equal((await audits("material.approved", id)).length, 1);
+});
+
+test("induction content: staff edit modules (version goes up) and publish a new policy version", async () => {
+  const mods = (await get("/api/coms/induction/modules", "marketing")).body.data;
+  assert.equal(mods.length, 6);
+  const m = mods[0];
+  assert.equal((await json("PATCH", `/api/coms/induction/modules/${m.id}`, { token: T.accounts, body: { title: "New title here", body: "x".repeat(40) } })).status, 403);
+  const r = await json("PATCH", `/api/coms/induction/modules/${m.id}`, { token: T.marketing, body: { title: "AFC courses and campuses (2027)", body: "Updated content about our courses and campuses for 2027." } });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.data.version, m.version + 1);
+  assert.equal((await audits("induction.module_updated", m.id)).length, 1);
+
+  assert.equal((await post("/api/coms/induction/policies", "marketing", { version: "2.0", title: "AFC agent policies", body: "The new policies and procedures text goes here." })).status, 403, "marketing cannot publish the PP");
+  const p = await post("/api/coms/induction/policies", "compliance", { version: "2.0", title: "AFC agent policies", body: "The new policies and procedures text goes here." });
+  assert.equal(p.status, 201, JSON.stringify(p.body));
+  assert.equal(p.body.data.is_current, true);
+  assert.equal((await post("/api/coms/induction/policies", "compliance", { version: "2.0", title: "AFC agent policies", body: "The new policies and procedures text goes here." })).status, 400, "no duplicate version");
+  const all = (await get("/api/coms/induction/policies", "compliance")).body.data;
+  assert.equal(all.filter((x) => x.is_current).length, 1, "only one version is current");
+  // an agent who acknowledged 1.0 is shown the new version but the gate stays open
+  const A6 = await agentWithLogin("Online Six", "a@onlinesix.in");
+  await finishModules(A6);
+  const cur = (await A6.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  assert.equal(cur.version, "2.0");
+});
+
+
+test("a renewal task is opened once, at month 11 of an active agreement", async () => {
+  const ag = (await pool.query(`SELECT id, effective_date, expires_at FROM agreements WHERE status='active' AND effective_date IS NOT NULL LIMIT 1`)).rows[0];
+  assert.ok(ag, "needs an active agreement from the earlier tests");
+  const count = async () => (await pool.query(`SELECT count(*)::int AS c FROM coms_tasks WHERE agreement_id=$1 AND type='RENEWAL'`, [ag.id])).rows[0].c;
+  try {
+    assert.equal(await count(), 0);
+    await tasksSvc.createRenewalTasks();
+    assert.equal(await count(), 0, "not before month 11");
+    await pool.query(`UPDATE agreements SET effective_date = CURRENT_DATE - interval '11 months', expires_at = CURRENT_DATE + 30 WHERE id=$1`, [ag.id]);
+    assert.ok((await tasksSvc.createRenewalTasks()) >= 1);
+    assert.equal(await count(), 1);
+    await tasksSvc.createRenewalTasks();
+    assert.equal(await count(), 1, "only one per agreement");
+    const t = (await pool.query(`SELECT category, due_basis, status FROM coms_tasks WHERE agreement_id=$1 AND type='RENEWAL'`, [ag.id])).rows[0];
+    assert.deepEqual(t, { category: "general", due_basis: "calendar", status: "open" });
+  } finally {
+    await pool.query(`DELETE FROM coms_tasks WHERE agreement_id=$1 AND type='RENEWAL'`, [ag.id]);
+    await pool.query(`UPDATE agreements SET effective_date=$2, expires_at=$3 WHERE id=$1`, [ag.id, ag.effective_date, ag.expires_at]);
+  }
 });

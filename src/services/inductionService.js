@@ -100,6 +100,12 @@ async function record(actor, agentId, body, ctx) {
   const agent = await loadAgent(agentId);
   const today = calendar.localDate();
   const conductorId = body.conducted_by || actor.id;
+  if (body.online_confirmation) {
+    // staff confirm the online induction (modules finished and policies acknowledged): a second check, not just the agent's word
+    const st = await require("./onlineInductionService").statusFor(agentId, agent);
+    if (!["awaiting_staff", "complete"].includes(st.stage)) throw new AppError(409, "The agent has not finished the online modules and acknowledged the policies yet.");
+    body = { ...body, outcome: "held", held_on: body.held_on || today, mode: "online", notes: body.notes || "Online induction checked and confirmed by staff" };
+  }
   const conductor = await staffMember(conductorId);
   const existing = (await repo.forAgent(agentId)).find((i) => i.status === "scheduled");
   const common = { mode: body.mode || "online", conductedBy: conductor.id, attendees: body.attendees || null, actorId: actor.id };
