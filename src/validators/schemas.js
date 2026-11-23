@@ -517,7 +517,23 @@ const inboundEmail = z.object({
   message_id: z.string().trim().max(300).optional(),
 }).strict();
 
+
+// ---- course catalogue (Phase 5 groundwork) ----
+const courseBody = z.object({
+  code: optional(z.string().trim().max(30)),
+  name: z.string().trim().min(3, "Enter the course name").max(200),
+  specialisation: optional(z.string().trim().max(200)),
+  course_type: z.enum(["VET", "ELICOS"]),
+  cricos_code: optional(z.string().trim().max(20)),
+  duration_weeks: optional(z.coerce.number().int().min(1).max(400)),
+  tuition_fee: optional(z.coerce.number().min(0).max(1000000)),
+  entry_requirements: optional(z.string().trim().max(4000)),
+  campus_ids: z.array(z.coerce.number().int().positive()).min(1, "Choose at least one campus").max(20),
+  active: z.boolean().default(true),
+}).strict().refine((v) => v.course_type === "ELICOS" || !!v.code, { path: ["code"], message: "Enter the course code" });
+
 module.exports = {
+  courseBody,
   commBody, commParams, leadBody, trainingBody, monitoringBody, correctiveBody, correctiveParams, correctiveResolve, broadcastBody, inboundEmail,
   userAuthorised,
   agentTermsSend,

@@ -33,6 +33,7 @@ const login = async (email) => (await json("POST", "/api/auth/login", { body: { 
 const mails = (to, re) => outbox.filter((m) => m.to === to && re.test(m.subject));
 const get = (p, t) => json("GET", p, { token: T[t] });
 const post = (p, t, body) => json("POST", p, { token: T[t], body: body || {} });
+const put = (p, t, body) => json("PUT", p, { token: T[t], body: body || {} });
 const audits = async (action, entityId) =>
   (await pool.query("SELECT * FROM audit_logs WHERE action=$1 AND ($2::text IS NULL OR entity_id=$2) ORDER BY id", [action, entityId || null])).rows;
 
@@ -1417,4 +1418,32 @@ test("retention: an agent record can only be soft-deleted", async () => {
   await keptForever("agents", `id='${ag.D}'`);
   assert.equal((await post(`/api/coms/agents/${ag.D}/delete`, "admin", { reason: "Entered twice by mistake" })).status, 200);
   assert.ok((await pool.query(`SELECT deleted_at FROM agents WHERE id=$1`, [ag.D])).rows[0].deleted_at, "soft-deleted, the row stays");
+});
+
+test("course catalogue: the enrolment form's courses are loaded; only administrators change them; nothing is deleted", async () => {
+  await pool.query(`DELETE FROM course_offerings WHERE course_id IN (SELECT id FROM courses WHERE code LIKE 'TST%')`);
+  await pool.query(`DELETE FROM courses WHERE code LIKE 'TST%'`); // leftovers from an earlier run of this test
+  const seen = (await get("/api/courses", "marketing")).body.data;
+  assert.deepEqual(seen.campuses.map((c) => c.name), ["Launceston", "Melbourne"]);
+  const onCampus = (name) => { const id = seen.campuses.find((c) => c.name === name).id; return seen.courses.filter((c) => c.campus_ids.map(Number).includes(Number(id))); };
+  assert.equal(onCampus("Launceston").length, 12);
+  assert.equal(onCampus("Melbourne").length, 14);
+  assert.equal(seen.courses.filter((c) => c.code === "ICT60220").length, 2, "the same code with two specialisations is two entries");
+  assert.ok(seen.courses.find((c) => c.course_type === "ELICOS" && /General English/.test(c.name)), "ELICOS has no code");
+  assert.ok(seen.courses.find((c) => c.code === "RII60520").campus_ids.length === 1, "civil construction is Melbourne only");
+
+  const body = { code: "TST40520", name: "Test course", course_type: "VET", campus_ids: [seen.campuses[0].id], active: true };
+  assert.equal((await post("/api/courses", "marketing", body)).status, 403, "only administrators");
+  assert.equal((await post("/api/courses", "admin", { ...body, campus_ids: [] })).status, 400, "a campus is needed");
+  assert.equal((await post("/api/courses", "admin", { ...body, code: "" })).status, 400, "a VET course needs its code");
+  const made = (await post("/api/courses", "admin", body)).body.data;
+  assert.equal((await post("/api/courses", "admin", body)).status, 400, "the same code is not listed twice");
+  assert.equal((await audits("course.created", String(made.id))).length, 1);
+
+  const off = (await put(`/api/courses/${made.id}`, "admin", { ...body, active: false, duration_weeks: 52, tuition_fee: 9500 })).body.data;
+  assert.equal(off.active, false);
+  assert.equal(off.duration_weeks, 52);
+  assert.equal((await audits("course.deactivated", String(made.id))).length, 1);
+  assert.ok(!(await get("/api/courses", "marketing")).body.data.courses.some((c) => c.id === made.id), "switched-off courses are hidden from others");
+  assert.ok((await get("/api/courses", "admin")).body.data.courses.some((c) => c.id === made.id), "the administrator still sees it");
 });
