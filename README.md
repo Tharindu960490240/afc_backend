@@ -241,8 +241,8 @@ Follows the client requirements for Phase 4.
 - Demo data: `npm run seed:demo` now adds communications, leads, training, a monitoring review with a sent notice, and two `[Demo]` broadcasts.
 - **Using Gmail for inbound email**: `docs/gmail-inbound-email.gs` is a small Google Apps Script. It runs every 5 minutes inside one chosen Gmail or Workspace mailbox, posts the mail labelled `AFC/agents` to `/api/inbound/email` with the secret, then relabels it `AFC/logged`. Setup steps are at the top of the file. No paid service is needed. Email sent to or from an agent's address is matched to that agent; everything else is ignored.
 
-## Phase 5 groundwork: course catalogue (migration 021)
-Taken from AFC's *Application for Enrolment Form - International Students* V3.1.
-- Tables `campuses`, `courses`, `course_offerings`. Launceston offers 12 VET courses; Melbourne offers the same 12 plus RII60520 and General English (ELICOS). ICT60220 appears twice because it has two specialisations (Telecommunications Network Engineering, Cyber security).
-- `GET /api/courses` for anyone signed in (active courses only; the administrator also sees switched-off ones). `POST /api/courses` and `PUT /api/courses/:id` are administrator only, and are audited. Courses are switched off, never deleted.
-- CRICOS code, duration, tuition fee and entry requirements are not on the form, so they start empty. The administrator fills them in on the new **Courses** screen as AFC provides them.
+## Phase 5 groundwork: course catalogue (migrations 021 and 022)
+Taken from AFC's *Application for Enrolment Form - International Students* V3.1 and AFC's course list of 24 November 2026.
+- Tables `campuses`, `courses`, `course_offerings`. 15 courses: 14 qualifications and General English (ELICOS). Melbourne offers all 15; Launceston offers 13 (not General English or RII60520). ICT60220 has three versions that share one CRICOS code (no specialisation, Telecommunications Network Engineering, Cyber Security) with different durations and fees; AFC's compliance team is checking this.
+- Each course has CRICOS code, duration (weeks), tuition fee, material fee, enrolment fee (AUD 250 for every qualification) and entry requirements. Fees exclude the enrolment fee. General English fees are not published, so they stay empty.
+- `GET /api/courses` for anyone signed in (active courses only; the administrator also sees switched-off ones). `POST /api/courses` and `PUT /api/courses/:id` are administrator only and audited. Courses are switched off, never deleted. Fees and durations can change, so staff edit them on the **Courses** screen.

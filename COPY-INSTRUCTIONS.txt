@@ -1,3 +1,3 @@
 Copy these files over your backend folder (do not delete anything).
-Then run:  npm run migrate     (adds migrations 011 to 021; 021 adds the course catalogue)
+Then run:  npm run migrate     (adds migrations 011 to 022; 021 and 022 add the course catalogue and its fees)
 New environment variable (optional): INBOUND_EMAIL_SECRET - needed only for inbound email logging.

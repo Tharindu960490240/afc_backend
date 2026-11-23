@@ -1426,9 +1426,14 @@ test("course catalogue: the enrolment form's courses are loaded; only administra
   const seen = (await get("/api/courses", "marketing")).body.data;
   assert.deepEqual(seen.campuses.map((c) => c.name), ["Launceston", "Melbourne"]);
   const onCampus = (name) => { const id = seen.campuses.find((c) => c.name === name).id; return seen.courses.filter((c) => c.campus_ids.map(Number).includes(Number(id))); };
-  assert.equal(onCampus("Launceston").length, 12);
-  assert.equal(onCampus("Melbourne").length, 14);
-  assert.equal(seen.courses.filter((c) => c.code === "ICT60220").length, 2, "the same code with two specialisations is two entries");
+  assert.equal(onCampus("Launceston").length, 13, "all but General English and RII60520");
+  assert.equal(onCampus("Melbourne").length, 15);
+  assert.equal(seen.courses.filter((c) => c.code === "ICT60220").length, 3, "one CRICOS code, three versions");
+  const cyber = seen.courses.find((c) => c.specialisation === "Cyber Security Specialisation");
+  assert.deepEqual([cyber.cricos_code, cyber.duration_weeks, cyber.tuition_fee, cyber.material_fee, cyber.enrolment_fee], ["108186K", 104, 24850, 600, 250]);
+  assert.equal(seen.courses.find((c) => c.code === "BSB50420").tuition_fee, 17800);
+  assert.equal(seen.courses.find((c) => c.course_type === "ELICOS").cricos_code, "116758A");
+  assert.equal(seen.courses.find((c) => c.course_type === "ELICOS").tuition_fee, null, "General English fees are not published");
   assert.ok(seen.courses.find((c) => c.course_type === "ELICOS" && /General English/.test(c.name)), "ELICOS has no code");
   assert.ok(seen.courses.find((c) => c.code === "RII60520").campus_ids.length === 1, "civil construction is Melbourne only");
 

@@ -527,6 +527,8 @@ const courseBody = z.object({
   cricos_code: optional(z.string().trim().max(20)),
   duration_weeks: optional(z.coerce.number().int().min(1).max(400)),
   tuition_fee: optional(z.coerce.number().min(0).max(1000000)),
+  material_fee: optional(z.coerce.number().min(0).max(1000000)),
+  enrolment_fee: optional(z.coerce.number().min(0).max(1000000)),
   entry_requirements: optional(z.string().trim().max(4000)),
   campus_ids: z.array(z.coerce.number().int().positive()).min(1, "Choose at least one campus").max(20),
   active: z.boolean().default(true),
