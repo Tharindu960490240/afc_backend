@@ -45,7 +45,7 @@ async function holidays(actor, ctx) {
 
 async function auditLog(actor, q, ctx) {
   const { rows } = await audit.search({
-    entityType: q.entity_type, entityId: q.entity_id, actorId: q.actor_id, action: q.action, from: q.from, to: q.to,
+    entityType: q.entity_type, entityId: q.entity_id, actorId: q.actor_id, action: q.action, from: q.from, to: q.to, text: q.search,
     limit: MAX_ROWS, offset: 0,
   });
   await done(actor, ctx, "audit", rows.length, { ...q, page: undefined, limit: undefined });

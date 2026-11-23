@@ -228,6 +228,7 @@ const agreementListQuery = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(["sent", "submitted", "rejected", "active", "expired", "cancelled", "superseded"]).optional(),
   agent_id: z.coerce.number().int().positive().optional(),
+  search: z.string().trim().max(100).optional(),
 });
 const agentsQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -419,6 +420,7 @@ const auditQuery = z.object({
   entity_id: z.string().trim().max(40).optional(),
   actor_id: z.coerce.number().int().positive().optional(),
   action: z.string().trim().max(60).optional(),
+  search: z.string().trim().max(100).optional(),
   from: dateOnly.optional(),
   to: dateOnly.optional(),
 });

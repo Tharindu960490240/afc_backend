@@ -214,10 +214,10 @@ async function cancel(actor, id, reason, ctx) {
 }
 
 // ---------- reading ----------
-async function list(actor, { status, agent_id: agentId, page, limit }) {
+async function list(actor, { status, agent_id: agentId, search, page, limit }) {
   const { rows, total } = await repo.list({
     agentId: STAFF_VIEW.includes(actor.role) ? agentId : actor.id,
-    status, limit, offset: (page - 1) * limit,
+    status, search, limit, offset: (page - 1) * limit,
   });
   return { rows, total, page, limit };
 }

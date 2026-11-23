@@ -74,10 +74,11 @@ async function revoke(actor, id, ctx) {
   await audit.log({ actorId: actor.id, action: "invitation.revoked", entityType: "invitation", entityId: id, ...ctx });
 }
 
-async function list(actor, { status, page, limit }) {
+async function list(actor, { status, search, page, limit }) {
   const { rows, total } = await invitationRepo.list({
     status: ["pending", "accepted", "revoked", "expired"].includes(status) ? status : undefined,
     invitedBy: isStaff(actor) ? undefined : actor.id,
+    search: search || undefined,
     limit, offset: (page - 1) * limit,
   });
   return { rows, total, page, limit };

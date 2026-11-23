@@ -264,6 +264,16 @@ test("expiry warnings are sent once per stage; expired status is automatic", asy
   const listed = await json("GET", "/api/agreements?status=expired", { token: adminT });
   assert.equal(listed.body.data.length, 1);
   assert.equal(listed.body.data[0].status, "expired");
+  const hit = await json("GET", "/api/agreements?search=agent1", { token: adminT });
+  assert.equal(hit.status, 200);
+  assert.ok(hit.body.data.length >= 1);
+  const miss = await json("GET", "/api/agreements?search=zzznomatchzzz", { token: adminT });
+  assert.equal(miss.body.data.length, 0);
+  const aud = await json("GET", "/api/coms/audit?search=agreement", { token: adminT });
+  assert.equal(aud.status, 200);
+  const inv = await json("GET", "/api/invitations?search=zzznomatchzzz", { token: adminT });
+  assert.equal(inv.status, 200);
+  assert.equal(inv.body.data.length, 0);
   assert.equal((await reminders.run()).expiry, 1);
   assert.ok(lastMail("agent1@x.com", /has expired/i));
   assert.equal((await reminders.run()).expiry, 0);

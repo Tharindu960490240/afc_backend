@@ -53,13 +53,17 @@ const findForDocument = async (id, client) =>
 const lockById = async (client, id) =>
   (await client.query(`SELECT * FROM agreements WHERE id = $1 FOR UPDATE`, [id])).rows[0];
 
-const list = async ({ agentId, status, limit, offset }) => {
+const list = async ({ agentId, status, search, limit, offset }) => {
   const where = [];
   const values = [];
   if (agentId) { values.push(agentId); where.push(`a.agent_id = $${values.length}`); }
   if (status) { values.push(status); where.push(`${EFFECTIVE_STATUS} = $${values.length}`); }
+  if (search) {
+    values.push(`%${search.replace(/[\\%_]/g, "\\$&")}%`);
+    where.push(`(a.title ILIKE $${values.length} OR ap.agency_name ILIKE $${values.length} OR u.email ILIKE $${values.length} OR (u.first_name || ' ' || u.last_name) ILIKE $${values.length})`);
+  }
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = Number((await query(`SELECT COUNT(*) FROM agreements a ${clause}`, values)).rows[0].count);
+  const total = Number((await query(`SELECT COUNT(*) ${FROM} ${clause}`, values)).rows[0].count);
   const rows = (
     await query(
       `${SELECT} ${clause}

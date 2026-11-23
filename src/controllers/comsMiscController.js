@@ -18,7 +18,7 @@ const removeHoliday = asyncHandler(async (req, res) => {
 const auditList = asyncHandler(async (req, res) => {
   const q = req.query;
   const r = await audit.search({
-    entityType: q.entity_type, entityId: q.entity_id, actorId: q.actor_id, action: q.action, from: q.from, to: q.to,
+    entityType: q.entity_type, entityId: q.entity_id, actorId: q.actor_id, action: q.action, text: q.search, from: q.from, to: q.to,
     limit: q.limit, offset: (q.page - 1) * q.limit,
   });
   res.json({ success: true, data: r.rows, pagination: { total: r.total, page: q.page, limit: q.limit } });

@@ -21,7 +21,7 @@ async function log(
 }
 
 // For the Compliance viewer and the history on a record.
-async function search({ entityType, entityId, actorId, action, from, to, limit, offset }) {
+async function search({ entityType, entityId, actorId, action, text, from, to, limit, offset }) {
   const where = [];
   const v = [];
   const add = (sql, val) => { v.push(val); where.push(sql.replace("?", `$${v.length}`)); };
@@ -29,10 +29,14 @@ async function search({ entityType, entityId, actorId, action, from, to, limit, 
   if (entityId) add("a.entity_id = ?", String(entityId));
   if (actorId) add("a.actor_id = ?", actorId);
   if (action) add("a.action LIKE ?", `${action.replace(/[%_]/g, "")}%`);
+  if (text) {
+    v.push(`%${text.replace(/[\\%_]/g, "\\$&")}%`);
+    where.push(`(a.action ILIKE $${v.length} OR a.entity_id ILIKE $${v.length} OR a.entity_type ILIKE $${v.length} OR (u.first_name || ' ' || u.last_name) ILIKE $${v.length})`);
+  }
   if (from) add("a.created_at >= ?", from);
   if (to) add("a.created_at < (?::date + 1)", to);
   const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-  const total = Number((await query(`SELECT COUNT(*) FROM audit_logs a ${clause}`, v)).rows[0].count);
+  const total = Number((await query(`SELECT COUNT(*) FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id ${clause}`, v)).rows[0].count);
   const rows = (
     await query(
       `SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at, a.ip, a.metadata, a.before, a.after,

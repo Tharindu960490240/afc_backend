@@ -37,10 +37,11 @@ const revoke = (client, id) =>
 const markAccepted = (client, id, userId) =>
   client.query(`UPDATE invitations SET accepted_at = now(), accepted_user_id = $2 WHERE id = $1`, [id, userId]);
 
-const list = async ({ status, invitedBy, limit, offset }) => {
+const list = async ({ status, invitedBy, search, limit, offset }) => {
   const where = [];
   const values = [];
   if (invitedBy) { values.push(invitedBy); where.push(`invited_by = $${values.length}`); }
+  if (search) { values.push(`%${search.replace(/[\\%_]/g, "\\$&")}%`); where.push(`(email ILIKE $${values.length} OR first_name ILIKE $${values.length})`); }
   if (status === "pending") where.push(`accepted_at IS NULL AND revoked_at IS NULL AND expires_at > now()`);
   if (status === "accepted") where.push(`accepted_at IS NOT NULL`);
   if (status === "revoked") where.push(`revoked_at IS NOT NULL AND accepted_at IS NULL`);
