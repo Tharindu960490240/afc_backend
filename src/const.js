@@ -153,7 +153,24 @@ const DOC_KINDS = Object.freeze({
 const REQUIRED_DOC_KINDS = Object.freeze(Object.keys(DOC_KINDS).filter((k) => DOC_KINDS[k].required));
 const DOC_STATUS = Object.freeze(["received", "accepted", "needs_update"]);
 
+
+// ---- Phase 5: student applications ----
+const APP_STATUS = Object.freeze({
+  DRAFT: "draft", RECEIVED: "received", UNDER_REVIEW: "under_review", INFO_REQUESTED: "info_requested",
+  DECISION_MADE: "decision_made", COE_ISSUED: "coe_issued", WITHDRAWN: "withdrawn",
+});
+const APP_PERMS = Object.freeze({
+  read: STAFF_ROLES,
+  assess: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.ADMISSIONS],       // review documents, ask the agent for more, record the decision
+  letter: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.ADMISSIONS],       // prepare a Letter of Offer draft
+  issueLetter: [ROLES.ADMIN, ROLES.DIRECTOR, ROLES.CEO],         // review, sign and issue it
+  confirmPayment: [ROLES.ADMIN, ROLES.ACCOUNTS],
+  recordCoe: [ROLES.ADMIN, ROLES.COE_ADMIN],                     // PRISMS CoE number and confirmation
+  settings: [ROLES.ADMIN],
+});
+
 module.exports = {
+  APP_STATUS, APP_PERMS,
   ROLES, ROLE_LIST, STAFF_ROLES, INVITE_PERMISSIONS, PASSWORD_REGEX,
   AGENT_STATUS, AGENT_TIERS, RISK_RATINGS, PERSON_ROLES, AGENT_PERMS, INDUCTION_PERMS, MATERIAL_CATEGORIES, CRM_PERMS, COMM_TYPES, AGENT_TRANSITIONS,
   REFERENCE_QUESTIONS, TASK_TYPES, TASK_TYPE_LIST, TASK_MANAGERS, DOC_KINDS, REQUIRED_DOC_KINDS, DOC_STATUS,

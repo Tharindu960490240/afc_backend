@@ -83,7 +83,7 @@ before(async () => {
   const hash = await hashPassword(PW);
   const staff = [
     ["admin", "admin"], ["marketing", "marketing_officer"], ["director", "director"], ["ceo", "ceo"],
-    ["coe", "coe_admin"], ["accounts", "accounts"], ["compliance", "compliance"],
+    ["coe", "coe_admin"], ["accounts", "accounts"], ["compliance", "compliance"], ["admissions", "admissions"],
   ];
   for (const [name, role] of staff) {
     await pool.query(`INSERT INTO users (email,password_hash,first_name,last_name,role) VALUES ($1,$2,$3,'Test',$4)`, [`${name}@afc.test`, hash, name[0].toUpperCase() + name.slice(1), role]);
@@ -1451,4 +1451,371 @@ test("course catalogue: the enrolment form's courses are loaded; only administra
   assert.equal((await audits("course.deactivated", String(made.id))).length, 1);
   assert.ok(!(await get("/api/courses", "marketing")).body.data.courses.some((c) => c.id === made.id), "switched-off courses are hidden from others");
   assert.ok((await get("/api/courses", "admin")).body.data.courses.some((c) => c.id === made.id), "the administrator still sees it");
+});
+
+// ---------- Phase 5, step 1: student applications (agent side) ----------
+const fullForm = (courseId, campusId, over = {}) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const start = new Date(Date.now() + 60 * 86400000).toISOString().slice(0, 10);
+  return {
+    course: { campus_id: campusId, course_id: courseId, commencement_date: start },
+    student: { title: "ms", given_names: "Asha", surname: "Rao", date_of_birth: "2000-03-04", country_of_birth: "India", nationality: "Indian", gender: "female", phone: "+91 90000 11111", email: "asha.rao@student.example" },
+    addresses: { overseas: { street: "5 Park Street", suburb: "Pune", country: "India" }, mailing: { same_as_above: true } },
+    passport: { number: "P1234567", expiry: "2032-01-01", country: "India" },
+    visa: { holds_visa: false, apply_where: "Mumbai" },
+    oshc: { has_oshc: false, afc_arrange: true },
+    current_studies: { enrolled_elsewhere: false },
+    language: { other_language: true, language: "Hindi", english_ability: "well", indigenous: "no" },
+    english: { tested: false, exemptions: ["none"] },
+    disability: { answer: "no" },
+    schooling: { highest_level: "year12", year_completed: 2018, still_enrolled: false },
+    previous_quals: { has_any: false },
+    employment: { status: "unemployed_full_time" },
+    study_reason: { reason: "better_job" },
+    credit: { apply: false },
+    usi: { has_usi: false },
+    emergency: { name: "Mr Rao", relationship: "Father", phone: "+91 90000 22222" },
+    extra_fees: { pay_more_than_50: false },
+    agent: { counsellor_name: "Dev Counsellor", counsellor_email: "c@x.in", phone: "+91 98765 43210", counsellor_marn: "1234567" },
+    declaration: { items: [true, true, true, true, true, true], student_name: "Asha Rao", date: today },
+    confirmations: { pre_enrolment_sent: true, agent_not_signed: true, docs_received_on: today },
+    ...over,
+  };
+};
+
+test("student applications: agent draft, validation, documents, submit, and the admin's wording", async () => {
+  const ag = await agentWithLogin("Student App One", "a@studentapp1.in", "active");
+  const other = await agentWithLogin("Student App Two", "a@studentapp2.in", "active");
+  const locked = await agentWithLogin("Student App Locked", "a@studentapp3.in", "active");
+
+  assert.equal((await ag.as("POST", "/api/student-applications")).status, 403, "the induction must be finished first");
+  await finishModules(ag);
+  const pp = (await ag.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  await ag.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  await post(`/api/coms/agents/${ag.D}/inductions`, "marketing", { outcome: "held", online_confirmation: true });
+  assert.equal((await post("/api/student-applications", "marketing")).status, 403, "staff do not start applications");
+  assert.equal((await ag.as("GET", "/api/student-applications/config")).body.data.can_submit, true);
+  assert.equal((await locked.as("GET", "/api/student-applications/config")).body.data.can_submit, false);
+
+  const cfg = (await ag.as("GET", "/api/student-applications/config")).body.data;
+  assert.equal(cfg.declaration_items.length, 6);
+  assert.ok(cfg.doc_types.some((t) => t.key === "passport" && t.required));
+  const mel = cfg.campuses.find((c) => c.name === "Melbourne");
+  const lau = cfg.campuses.find((c) => c.name === "Launceston");
+  const cyber = cfg.courses.find((c) => c.specialisation === "Cyber Security Specialisation");
+  const civil = cfg.courses.find((c) => c.code === "RII60520");
+
+  const draft = await ag.as("POST", "/api/student-applications");
+  assert.equal(draft.status, 201);
+  const id = draft.body.data.id;
+  assert.equal(draft.body.data.status, "draft");
+  assert.equal(draft.body.data.data.agent.counsellor_email, "a@studentapp1.in", "counsellor details are pre-filled");
+  assert.equal((await other.as("GET", `/api/student-applications/${id}`)).status, 404, "another agent cannot open it");
+  assert.equal((await other.as("GET", "/api/student-applications")).body.data.length, 0);
+
+  // a draft accepts half-filled sections but not nonsense
+  assert.equal((await ag.as("PUT", `/api/student-applications/${id}`, { data: { student: { given_names: "Asha" } } })).status, 200);
+  assert.equal((await ag.as("PUT", `/api/student-applications/${id}`, { data: { student: { email: "nope" } } })).status, 400);
+  assert.equal((await ag.as("PUT", `/api/student-applications/${id}`, { data: { surprise: {} } })).status, 400, "unknown sections are refused");
+
+  // submitting early lists what is missing
+  const early = await ag.as("POST", `/api/student-applications/${id}/submit`);
+  assert.equal(early.status, 400);
+  assert.ok(early.body.errors["student.surname"]);
+  assert.ok(early.body.errors.documents, "required documents are listed");
+
+  const good = fullForm(cyber.id, mel.id);
+  const saved = await ag.as("PUT", `/api/student-applications/${id}`, { data: good });
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(saved.body.data.student_surname, "Rao");
+
+  // cross-checks
+  const check = async (patch) => { await ag.as("PUT", `/api/student-applications/${id}`, { data: patch }); return (await ag.as("POST", `/api/student-applications/${id}/submit`)).body.errors || {}; };
+  assert.ok((await check({ course: { ...good.course, campus_id: lau.id, course_id: civil.id } }))["course.course_id"], "course must be on offer at the campus");
+  await check({ course: good.course });
+  assert.ok((await check({ student: { ...good.student, date_of_birth: "2015-01-01" } }))["student.date_of_birth"], "18 or older");
+  await check({ student: good.student });
+  assert.ok((await check({ passport: { ...good.passport, expiry: "2020-01-01" } }))["passport.expiry"], "expired passport");
+  await check({ passport: good.passport });
+  assert.ok((await check({ declaration: { ...good.declaration, items: [true, true, false, true, true, true] } }))["declaration.items"]);
+  await check({ declaration: good.declaration });
+  assert.ok((await check({ visa: { holds_visa: true, apply_where: "x" } }))["visa.type"], "Yes answers need their follow-up boxes");
+  await check({ visa: good.visa });
+
+  // documents
+  const errs = (await ag.as("POST", `/api/student-applications/${id}/submit`)).body.errors;
+  assert.deepEqual(Object.keys(errs), ["documents"], "only the documents remain");
+  assert.equal((await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: "nonsense", file: pdf() })).status, 400);
+  assert.equal((await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: "passport", file: { name: "a.exe", data: "AAAAAAAAAAAA" } })).status, 400);
+  const required = cfg.doc_types.filter((t) => t.required);
+  let last;
+  for (const t of required) last = await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: t.key, file: pdf() });
+  assert.equal(last.status, 201, JSON.stringify(last.body));
+  const first = last.body.data.documents.find((d) => d.kind === "passport");
+  const replaced = await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: "passport", file: pdf(300) });
+  assert.equal(replaced.body.data.documents.filter((d) => d.kind === "passport").length, 1, "a new upload replaces the old one");
+  assert.notEqual(replaced.body.data.documents.find((d) => d.kind === "passport").id, first.id);
+  assert.equal((await other.as("GET", `/api/student-applications/${id}/documents/${first.id}/download`)).status, 404);
+  const dlDoc = replaced.body.data.documents.find((d) => d.kind === "passport");
+  const dl = await fetch(`${base}/api/student-applications/${id}/documents/${dlDoc.id}/download`, { headers: { Authorization: `Bearer ${ag.tok}` } });
+  assert.equal(dl.status, 200);
+  assert.match(dl.headers.get("content-disposition"), /Asha%20Rao/, "downloads are named for the student");
+
+  // submit
+  const admissionsBefore = outbox.length;
+  const sub = await ag.as("POST", `/api/student-applications/${id}/submit`);
+  assert.equal(sub.status, 200, JSON.stringify(sub.body));
+  const app = sub.body.data;
+  assert.equal(app.status, "received");
+  assert.match(app.ref_no, /^SA-\d{4}-\d{4}$/);
+  assert.ok(app.assessment_due, "the 5-working-day clock starts");
+  assert.equal(app.late_submission, false);
+  assert.equal(app.can_edit, false);
+  assert.equal((await ag.as("PUT", `/api/student-applications/${id}`, { data: { student: { given_names: "X" } } })).status, 409, "locked once submitted");
+  assert.equal((await ag.as("POST", `/api/student-applications/${id}/submit`)).status, 409);
+  assert.equal((await ag.as("POST", `/api/student-applications/${id}/discard`)).status, 409);
+  assert.equal(app.history.length, 2);
+  assert.ok(mails("a@studentapp1.in", /received/i).length >= 1, "the agent gets an acknowledgement");
+  assert.ok(mails("asha.rao@student.example", /received/i).length >= 1, "so does the student");
+  assert.ok(outbox.length > admissionsBefore);
+  assert.equal((await audits("student_application.submitted", id)).length, 1);
+
+  // a second draft can be thrown away
+  const d2 = (await ag.as("POST", "/api/student-applications")).body.data.id;
+  assert.equal((await ag.as("POST", `/api/student-applications/${d2}/discard`)).status, 200);
+  assert.equal((await ag.as("GET", "/api/student-applications")).body.data.length, 1);
+
+  // the transfer rule and the late flag
+  const d3 = (await ag.as("POST", "/api/student-applications")).body.data.id;
+  const lateDay = new Date(Date.now() - 5 * 86400000).toISOString().slice(0, 10);
+  await ag.as("PUT", `/api/student-applications/${d3}`, { data: fullForm(cyber.id, mel.id, {
+    current_studies: { enrolled_elsewhere: true, provider: "Other College", course_name: "Diploma", course_start: "2026-06-01", months_completed: 5, is_principal: true, released: false },
+    confirmations: { pre_enrolment_sent: true, agent_not_signed: true, docs_received_on: lateDay },
+  }) });
+  for (const t of required) await ag.as("POST", `/api/student-applications/${d3}/documents`, { kind: t.key, file: pdf() });
+  const s3 = (await ag.as("POST", `/api/student-applications/${d3}/submit`)).body.data;
+  assert.equal(s3.late_submission, true, "more than 24 hours after the documents arrived");
+  assert.equal(s3.needs_transfer_review, true, "under 12 months and not released");
+
+  // administrators set the wording and the document list
+  assert.equal((await ag.as("GET", "/api/student-applications/settings")).status, 403);
+  const s = (await get("/api/student-applications/settings", "admin")).body.data;
+  assert.equal(s.settings.assessment_working_days, 5);
+  const upd = await put("/api/student-applications/settings", "admin", { ...s.settings, assessment_working_days: 4, declaration_items: [...s.settings.declaration_items, "A seventh declaration for the test."] });
+  assert.equal(upd.status, 200, JSON.stringify(upd.body));
+  assert.equal(upd.body.data.settings.declaration_items.length, 7);
+  assert.equal((await audits("student_application.settings_saved")).length >= 1, true);
+  await put("/api/student-applications/settings", "admin", s.settings); // put it back for re-runs
+  const types = s.doc_types.map((t) => ({ key: t.key, label: t.label, required: t.required, active: t.active }));
+  assert.equal((await put("/api/student-applications/settings/document-types", "admin", { items: types.filter((t) => t.key !== "passport") })).status, 400, "types are switched off, not deleted");
+  assert.equal((await put("/api/student-applications/settings/document-types", "admin", { items: types.map((t) => t.key === "signed_form" ? { ...t, required: false } : t) })).status, 400, "the signed form stays required");
+  const withNew = await put("/api/student-applications/settings/document-types", "admin", { items: [...types, { label: "Test extra proof", required: false, active: true }] });
+  assert.equal(withNew.status, 200, JSON.stringify(withNew.body));
+  assert.ok(withNew.body.data.doc_types.some((t) => t.key === "test_extra_proof"));
+
+  // a downloadable form
+  const up = await post("/api/student-applications/settings/forms", "admin", { label: "GS test form", file: pdf() });
+  assert.equal(up.status, 201, JSON.stringify(up.body));
+  const f = up.body.data.forms.find((x) => x.label === "GS test form");
+  assert.ok((await ag.as("GET", "/api/student-applications/config")).body.data.forms.some((x) => x.id === f.id));
+  assert.equal((await ag.as("GET", `/api/student-applications/forms/${f.id}/download`)).status, 200);
+  await post(`/api/student-applications/settings/forms/${f.id}`, "admin", { active: false });
+  assert.equal((await ag.as("GET", `/api/student-applications/forms/${f.id}/download`)).status, 404, "a hidden form cannot be downloaded");
+});
+
+// ---------- Phase 5, step 2: the staff review ----------
+test("student applications: staff queue, document review, request for information, decision and the day-4 alert", async () => {
+  const ag = await agentWithLogin("Student Review One", "a@studentrev1.in", "active");
+  await finishModules(ag);
+  const pp = (await ag.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  await ag.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  await post(`/api/coms/agents/${ag.D}/inductions`, "marketing", { outcome: "held", online_confirmation: true });
+  const cfg = (await ag.as("GET", "/api/student-applications/config")).body.data;
+  const mel = cfg.campuses.find((c) => c.name === "Melbourne");
+  const course = cfg.courses.find((c) => c.code === "BSB50420");
+  const make = async (given) => {
+    const id = (await ag.as("POST", "/api/student-applications")).body.data.id;
+    const form = fullForm(course.id, mel.id);
+    form.student = { ...form.student, given_names: given };
+    await ag.as("PUT", `/api/student-applications/${id}`, { data: form });
+    for (const t of cfg.doc_types.filter((x) => x.required)) await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: t.key, file: pdf() });
+    const r = await ag.as("POST", `/api/student-applications/${id}/submit`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return id;
+  };
+  const draftOnly = (await ag.as("POST", "/api/student-applications")).body.data.id;
+  const id = await make("Reviewa");
+
+  // who can see and do what
+  assert.equal((await ag.as("GET", "/api/student-applications/staff")).status, 403, "agents cannot use the staff queue");
+  const q = (await get("/api/student-applications/staff?q=Reviewa", "accounts")).body.data;
+  assert.equal(q.rows.length, 1, "every staff role can read");
+  assert.equal(q.rows[0].status, "received");
+  assert.equal(q.rows[0].days_left, 5);
+  assert.ok(!(await get("/api/student-applications/staff", "admin")).body.data.rows.some((r) => r.id === draftOnly), "drafts are not in the queue");
+  assert.equal((await get(`/api/student-applications/staff/${draftOnly}`, "admin")).status, 404);
+  assert.equal((await post(`/api/student-applications/staff/${id}/start-review`, "accounts")).status, 403, "accounts cannot assess");
+  assert.equal((await post(`/api/student-applications/staff/${id}/start-review`, "marketing")).status, 403);
+
+  const d = (await get(`/api/student-applications/staff/${id}`, "marketing")).body.data;
+  assert.equal(d.can_assess, false);
+  assert.equal(d.agent.legal_name, "Student Review One");
+  assert.ok(d.documents.length >= 8);
+
+  // start, then review documents
+  const started = await post(`/api/student-applications/staff/${id}/start-review`, "admissions");
+  assert.equal(started.status, 200, JSON.stringify(started.body));
+  assert.equal(started.body.data.status, "under_review");
+  assert.equal((await post(`/api/student-applications/staff/${id}/start-review`, "admissions")).status, 409);
+  const passport = d.documents.find((x) => x.kind === "passport");
+  const bad = await post(`/api/student-applications/staff/${id}/documents/${passport.id}/review`, "admissions", { status: "needs_update" });
+  assert.equal(bad.status, 400, "a note is needed when asking for a new copy");
+  await post(`/api/student-applications/staff/${id}/documents/${passport.id}/review`, "admissions", { status: "needs_update", note: "The photo page is cut off" });
+  const dec = await post(`/api/student-applications/staff/${id}/decision`, "admissions", { decision: "offer" });
+  assert.equal(dec.status, 400, "cannot offer while a document needs an update");
+
+  // ask the agent for more
+  assert.equal((await post(`/api/student-applications/staff/${id}/request-info`, "admissions", { note: "" })).status, 400);
+  const before = outbox.length;
+  const asked = await post(`/api/student-applications/staff/${id}/request-info`, "admissions", { note: "Please send a clearer passport copy." });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  assert.equal(asked.body.data.status, "info_requested");
+  assert.ok(mails("a@studentrev1.in", /More information needed/).length === 1);
+  assert.ok(outbox.length > before);
+  const mine = (await ag.as("GET", `/api/student-applications/${id}`)).body.data;
+  assert.equal(mine.can_edit, true, "the agent can edit again");
+  assert.equal(mine.required_documents.find((x) => x.kind === "passport").status, "needs_update");
+  assert.ok(mine.history.some((h) => h.to_status === "info_requested" && /clearer passport/.test(h.note)), "the agent sees the request");
+
+  // the agent replaces the passport and sends it back; the due date does not move
+  await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: "passport", file: pdf(400) });
+  const again = await ag.as("POST", `/api/student-applications/${id}/submit`);
+  assert.equal(again.status, 200, JSON.stringify(again.body));
+  assert.equal(again.body.data.status, "under_review");
+  assert.equal(again.body.data.assessment_due, d.assessment_due, "resubmitting keeps the original due date");
+
+  // decision
+  assert.equal((await post(`/api/student-applications/staff/${id}/decision`, "accounts", { decision: "offer" })).status, 403);
+  assert.equal((await post(`/api/student-applications/staff/${id}/decision`, "admissions", { decision: "not_offered" })).status, 400, "a reason is needed");
+  const offer = await post(`/api/student-applications/staff/${id}/decision`, "director", { decision: "offer" });
+  assert.equal(offer.status, 200, JSON.stringify(offer.body));
+  assert.equal(offer.body.data.status, "decision_made");
+  assert.equal(offer.body.data.decision, "offer");
+  assert.ok(mails("a@studentrev1.in", /offer/i).length >= 1, "the agent is told");
+  assert.equal((await post(`/api/student-applications/staff/${id}/decision`, "director", { decision: "offer" })).status, 409, "decided only once");
+  assert.equal((await audits("student_application.decided", id)).length, 1);
+
+  // not offered, with a reason; withdrawn
+  const id2 = await make("Reviewb");
+  const no = await post(`/api/student-applications/staff/${id2}/decision`, "admissions", { decision: "not_offered", reason: "Entry requirements are not met." });
+  assert.equal(no.body.data.decision, "not_offered");
+  assert.ok((await ag.as("GET", `/api/student-applications/${id2}`)).body.data.decision_reason);
+  const id3 = await make("Reviewc");
+  assert.equal((await post(`/api/student-applications/staff/${id3}/withdraw`, "admissions", {})).status, 400);
+  assert.equal((await post(`/api/student-applications/staff/${id3}/withdraw`, "admissions", { reason: "The student changed plans" })).body.data.status, "withdrawn");
+
+  // day-4 alert: one email to the director when one working day is left, and only once
+  const id4 = await make("Reviewd");
+  await pool.query(`UPDATE student_applications SET assessment_due = (current_date + 1) WHERE id = $1`, [id4]);
+  // make sure tomorrow counts as a working day for this check
+  const review = require("../src/services/studentReviewService");
+  await pool.query(`UPDATE student_applications SET day4_alerted_at = now() WHERE id <> $1`, [id4]);
+  const sent = outbox.length;
+  assert.equal(await review.runAlerts(), 1);
+  assert.ok(outbox.length > sent, "the director is emailed");
+  assert.equal(await review.runAlerts(), 0, "not sent twice");
+  assert.equal((await get("/api/student-applications/staff?status=withdrawn", "admin")).body.data.rows.some((r) => r.id === id3), true);
+});
+
+// ---------- Phase 5, step 3: Letter of Offer, payment, CoE and Verification of Enrolment ----------
+test("student applications: Letter of Offer, payment, CoE record and Verification of Enrolment", async () => {
+  const ag = await agentWithLogin("Student Letter One", "a@studentlet1.in", "active");
+  const other = await agentWithLogin("Student Letter Two", "a@studentlet2.in", "active");
+  await finishModules(ag);
+  const pp = (await ag.as("GET", "/api/agent-application/online-induction")).body.data.pp;
+  await ag.as("POST", "/api/agent-application/online-induction/acknowledge", { version_id: pp.id });
+  await post(`/api/coms/agents/${ag.D}/inductions`, "marketing", { outcome: "held", online_confirmation: true });
+  const cfg = (await ag.as("GET", "/api/student-applications/config")).body.data;
+  const course = cfg.courses.find((c) => c.code === "BSB50420");
+  const id = (await ag.as("POST", "/api/student-applications")).body.data.id;
+  await ag.as("PUT", `/api/student-applications/${id}`, { data: fullForm(course.id, cfg.campuses.find((c) => c.name === "Melbourne").id) });
+  for (const t of cfg.doc_types.filter((x) => x.required)) await ag.as("POST", `/api/student-applications/${id}/documents`, { kind: t.key, file: pdf() });
+  assert.equal((await ag.as("POST", `/api/student-applications/${id}/submit`)).status, 200);
+  const S = (p) => `/api/student-applications/staff/${id}${p}`;
+
+  // the letter only follows an offer decision
+  assert.equal((await post(S("/letter"), "admissions")).status, 409);
+  await post(S("/decision"), "admissions", { decision: "offer" });
+  assert.equal((await post(S("/letter"), "accounts")).status, 403);
+  const prepared = await post(S("/letter"), "admissions");
+  assert.equal(prepared.status, 200, JSON.stringify(prepared.body));
+  const draft = prepared.body.data.letter;
+  assert.equal(draft.status, "draft");
+  assert.match(draft.body, /Asha Rao/);
+  assert.match(draft.body, /BSB50420/);
+  assert.ok(!/\{\{/.test(draft.body), "every placeholder is filled in");
+  assert.equal(Number(draft.tuition_fee), 17800, "fees come from the course list");
+  assert.equal((await post(S("/letter"), "admissions")).status, 409, "one letter at a time");
+  assert.equal((await ag.as("GET", S(""))).status, 403, "agents never see the draft");
+
+  // editing
+  assert.equal((await put(S("/letter"), "admissions", { body: "short" })).status, 400);
+  const edited = await put(S("/letter"), "admissions", { body: draft.body + "\n\nExtra line from admissions.", tuition_fee: 17800, material_fee: 600, enrolment_fee: 250 });
+  assert.equal(edited.status, 200, JSON.stringify(edited.body));
+  assert.match(edited.body.data.letter.body, /Extra line/);
+
+  // issuing: only Director, CEO or Admin, and only once the wording is confirmed
+  assert.equal((await post(S("/letter/issue"), "admissions")).status, 403, "the preparer cannot issue");
+  const settings = (await get("/api/student-applications/settings", "admin")).body.data.settings;
+  await put("/api/student-applications/settings", "admin", { ...settings, letters_confirmed: false });
+  assert.equal((await post(S("/letter/issue"), "director")).status, 409, "not until the wording is confirmed");
+  assert.equal((await put("/api/student-applications/settings", "director", { ...settings, letters_confirmed: true })).status, 403);
+  await put("/api/student-applications/settings", "admin", { ...settings, letters_confirmed: true });
+  await put(S("/letter"), "admissions", { body: edited.body.data.letter.body + "\n{{unknown_field}}", tuition_fee: 17800 });
+  const blocked = await post(S("/letter/issue"), "director");
+  assert.equal(blocked.status, 400, "an unfilled field stops the letter");
+  await put(S("/letter"), "admissions", { body: edited.body.data.letter.body, tuition_fee: 17800 });
+  assert.equal((await ag.as("GET", `/api/student-applications/${id}/files/letter`)).status, 404, "nothing to download before it is issued");
+  const issued = await post(S("/letter/issue"), "director");
+  assert.equal(issued.status, 200, JSON.stringify(issued.body));
+  assert.equal(issued.body.data.letter.status, "issued");
+  assert.equal((await audits("student_application.letter_issued", id)).length, 1);
+  assert.ok(mails("a@studentlet1.in", /Letter of Offer is ready/).length >= 1, "the agent is told");
+
+  const mine = (await ag.as("GET", `/api/student-applications/${id}`)).body.data;
+  assert.deepEqual(mine.outputs.map((o) => o.kind), ["letter"]);
+  assert.equal(mine.letter, undefined, "the agent gets the file, not the draft data");
+  const dl = await fetch(`${base}/api/student-applications/${id}/files/letter`, { headers: { Authorization: `Bearer ${ag.tok}` } });
+  assert.equal(dl.status, 200);
+  assert.equal(Buffer.from(await dl.arrayBuffer()).subarray(0, 4).toString(), "%PDF");
+  assert.equal((await other.as("GET", `/api/student-applications/${id}/files/letter`)).status, 404, "another agent cannot download it");
+
+  // payment, then the CoE
+  assert.equal((await post(S("/coe"), "coe", { coe_number: "E0123456789", issued_on: "2026-01-01" })).status, 409, "no CoE before payment");
+  assert.equal((await post(S("/payment"), "coe", {})).status, 403, "the CoE administrator does not confirm payment");
+  assert.equal((await post(S("/payment"), "accounts", { note: "Receipt 4411" })).status, 200);
+  assert.equal((await post(S("/payment"), "accounts", {})).status, 409, "only once");
+  assert.equal((await post(S("/letter/revise"), "director")).status, 409, "the letter is fixed once payment is in");
+  assert.equal((await post(S("/coe"), "accounts", { coe_number: "E0123456789", issued_on: "2026-01-01" })).status, 403);
+  assert.equal((await post(S("/coe"), "coe", { coe_number: "x", issued_on: "2026-01-01" })).status, 400);
+  assert.equal((await post(S("/coe"), "coe", { coe_number: "E0123456789", issued_on: "2999-01-01" })).status, 400, "a future date");
+  const coe = await post(S("/coe"), "coe", { coe_number: "e0123456789", issued_on: "2026-11-20", file: pdf() });
+  assert.equal(coe.status, 200, JSON.stringify(coe.body));
+  assert.equal(coe.body.data.status, "coe_issued");
+  assert.equal(coe.body.data.coe.number, "E0123456789");
+  assert.ok(mails("a@studentlet1.in", /CoE issued/).length >= 1);
+
+  // Verification of Enrolment
+  assert.equal((await post(S("/voe"), "accounts")).status, 403);
+  const voe = await post(S("/voe"), "coe");
+  assert.equal(voe.status, 200, JSON.stringify(voe.body));
+  assert.equal((await post(S("/voe"), "coe")).status, 409, "once");
+  const out = (await ag.as("GET", `/api/student-applications/${id}`)).body.data.outputs.map((o) => o.kind).sort();
+  assert.deepEqual(out, ["coe", "letter", "voe"]);
+  for (const k of out) assert.equal((await ag.as("GET", `/api/student-applications/${id}/files/${k}`)).status, 200);
+  assert.equal((await post(S("/withdraw"), "admin", { reason: "x y z" })).status, 409, "a CoE cannot be withdrawn here");
+
+  // the 7-year rule applies to the letter too
+  await assert.rejects(pool.query(`DELETE FROM letters_of_offer WHERE application_id = $1`, [id]), /kept for 7 years/);
+  await put("/api/student-applications/settings", "admin", { ...settings, letters_confirmed: false });
 });

@@ -58,6 +58,7 @@ async function remove() {
   // online-induction completions and acknowledgements are evidence (guarded by triggers): lift the guard only for the demo agents
   const demo = "(SELECT id FROM agents WHERE email LIKE '%@demo.example')";
   // Phase 4 records are kept for 7 years (delete is blocked by triggers). Lift the guard only for the demo agents, then put it back.
+  await require("./seed-demo-applications").remove();
   const keep = ["agent_communications", "agent_leads", "agent_training_records", "agent_corrective_actions", "agent_monitoring_reviews", "marketing_broadcast_deliveries", "marketing_broadcasts", "agents"];
   for (const t of keep) await pool.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
   let r;
@@ -366,6 +367,8 @@ async function main() {
     await pool.query(
       `INSERT INTO marketing_broadcasts (kind, subject, body, status, drafted_by) VALUES ('policy','[Demo] Updated complaints policy','We have updated our complaints and appeals policy. The new version is on the AFC website.\n\nPlease use the current version when you talk to students.','draft',$1)`, [marketing]);
   }
+  const demoApps = await require("./seed-demo-applications").seed().catch((e) => { console.log("Could not add the demo student applications:", e.message); return 0; });
+  if (demoApps) console.log(`Added ${demoApps} demo student applications.`);
   console.log(`Added ${added} demo agents. Their emails end in @demo.example. Remove with: npm run seed:demo -- --remove`);
   console.log(`\nDemo logins (password ${DEMO_PASSWORD}):`);
   for (const [role, , , email] of STAFF) console.log(`  ${email}  (${role})`);

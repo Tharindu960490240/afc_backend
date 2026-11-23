@@ -501,6 +501,90 @@ function sendOnlineInductionComplete({ to, firstName, agentName, link }) {
     action: { text: "Open the agent record", url: link },
   });
 }
+
+// ---------- Phase 5: student applications ----------
+function sendStudentAppReceived({ to, firstName, ref, studentName, courseName, campusName, dueText, forStudent, agentName, link }) {
+  return deliver(to, `Application received: ${ref}`, {
+    preheader: `We have received the application for ${studentName}.`,
+    title: forStudent ? "We have received your application" : "Student application received",
+    greeting: `Hello ${firstName},`,
+    paragraphs: forStudent
+      ? [
+        `${agentName} has submitted your application to study **${courseName}** at the ${campusName} campus.`,
+        `Your reference number is **${ref}**. Our admissions team will assess it and contact your agent${dueText ? ` by ${dueText}` : ""}.`,
+        "If you did not apply to study with the Australian Federation College, please reply to this email.",
+      ]
+      : [
+        `We have received the application for **${studentName}** (**${courseName}**, ${campusName} campus).`,
+        `The reference number is **${ref}**. Admissions will assess it${dueText ? ` by **${dueText}**` : ""}. You can follow its progress in the portal.`,
+      ],
+    ...(forStudent ? {} : { action: { text: "Open the application", url: link } }),
+  });
+}
+function sendStudentAppToStaff({ to, firstName, ref, studentName, agentName, courseName, campusName, dueText, flags, link }) {
+  return deliver(to, `New student application ${ref}: ${studentName}`, {
+    preheader: `${agentName} submitted an application for ${studentName}.`,
+    title: "New student application",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `**${agentName}** has submitted an application for **${studentName}**: ${courseName}, ${campusName} campus. Reference **${ref}**.`,
+      `Please assess it by **${dueText}** (5 working days).`,
+      ...(flags.length ? [`Please look at: ${flags.join("; ")}.`] : []),
+    ],
+    action: { text: "Open the application", url: link },
+  });
+}
+
+function sendStudentAppInfoRequest({ to, firstName, ref, studentName, note, docs, link }) {
+  return deliver(to, `More information needed: ${ref}`, {
+    preheader: `AFC needs more information about ${studentName}.`,
+    title: "More information needed",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [
+      `AFC needs more information before it can assess the application for **${studentName}** (reference **${ref}**).`,
+      ...paras(note),
+      ...(docs.length ? [`Documents to update: ${docs.join("; ")}.`] : []),
+      "Please update the application and submit it again. AFC will carry on from where it stopped.",
+    ],
+    action: { text: "Update the application", url: link },
+  });
+}
+function sendStudentAppDecision({ to, firstName, ref, studentName, offered, reason, link }) {
+  return deliver(to, offered ? `Decision: offer to be issued for ${studentName}` : `Decision on ${ref}: not offered`, {
+    preheader: offered ? `AFC will issue a Letter of Offer for ${studentName}.` : `AFC cannot offer ${studentName} a place.`,
+    title: offered ? "AFC will make an offer" : "Application not offered",
+    greeting: `Hello ${firstName},`,
+    paragraphs: offered
+      ? [`AFC has assessed the application for **${studentName}** (reference **${ref}**) and will issue a Letter of Offer. You will be told when it is ready to download.`]
+      : [`AFC has assessed the application for **${studentName}** (reference **${ref}**) and cannot offer a place.`, ...(reason ? paras(reason) : [])],
+    action: { text: "Open the application", url: link },
+  });
+}
+function sendStudentAppDueAlert({ to, firstName, ref, studentName, agentName, dueText, link }) {
+  return deliver(to, `Assessment due soon: ${ref}`, {
+    preheader: "Day 4 of 5 working days.",
+    title: "Student application due soon",
+    greeting: `Hello ${firstName},`,
+    paragraphs: [`The application for **${studentName}** from **${agentName}** (reference **${ref}**) is at day 4 of 5 working days and has not been decided. It is due by **${dueText}**.`],
+    action: { text: "Open the application", url: link },
+  });
+}
+
+function sendStudentAppReadyForCoe({ to, firstName, ref, studentName, link }) {
+  return deliver(to, `Payment confirmed, CoE needed: ${ref}`, {
+    preheader: `Payment is confirmed for ${studentName}.`, title: "Ready for a CoE", greeting: `Hello ${firstName},`,
+    paragraphs: [`Accounts have confirmed payment for **${studentName}** (reference **${ref}**). Please issue the Confirmation of Enrolment in PRISMS and record the number.`],
+    action: { text: "Open the application", url: link },
+  });
+}
+function sendStudentAppUpdate({ to, firstName, ref, studentName, subject, message, link }) {
+  return deliver(to, `${subject}: ${ref}`, {
+    preheader: `${subject} for ${studentName}.`, title: subject, greeting: `Hello ${firstName},`,
+    paragraphs: [`Application **${ref}** for **${studentName}**: ${message}`],
+    action: { text: "Open the application", url: link },
+  });
+}
+
 // body text from staff: blank lines separate paragraphs
 const paras = (text) => String(text || "").split(/\n{2,}/).map((x) => x.trim()).filter(Boolean);
 function sendBroadcast({ to, firstName, subject, body, link }) {
@@ -619,7 +703,7 @@ module.exports = {
   sendInfoRequest, sendTermsReport,
   sendReferenceRequest, sendReferenceReceived, sendAgentDecision, sendDecisionTimer, sendTaskAlert, sendTaskAssigned, sendInductionScheduled, sendInductionReminder, sendAgentWelcome, sendOnlineInductionComplete, sendMaterialUpdate, sendBroadcast, sendCorrectiveAction, sendCorrectiveStaffAlert,
   sendAgentVerification, sendRegistrationExists, sendAgentPending, sendApplicationReceived, sendAgentRegistrationToAdmin, sendNewApplicationToStaff,
-  sendAgentApproved, sendAgentRejected,
+  sendAgentApproved, sendAgentRejected, sendStudentAppReceived, sendStudentAppToStaff, sendStudentAppInfoRequest, sendStudentAppDecision, sendStudentAppDueAlert, sendStudentAppReadyForCoe, sendStudentAppUpdate,
   outbox, flushEmails, sendInvitation, sendPasswordReset, sendPasswordChanged,
   sendAgreementSent, sendAgreementSubmitted, sendAgreementRejected, sendAgreementApproved,
   sendCertificate, sendSignedCopyToStaff, sendAgreementCancelled, sendAgreementReminder, sendReviewReminder, sendAgreementExpiry,

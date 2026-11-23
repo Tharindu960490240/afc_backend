@@ -7,6 +7,7 @@
 //   - induction reminders: the day before, outcome not recorded, and the induction task due soon / overdue (Phase 3)
 //   - 6-monthly monitoring task, overdue corrective actions, unfinished broadcasts (Phase 4)
 //   - marketing material notices: retry any agent not told within the 24-hour duty (Phase 3)
+//   - day-4 alert to the director for student applications still waiting for a decision (Phase 5)
 //   - safety net: an approved agent with a countersigned agreement is moved to Onboarding if that step was missed
 // Runs from node-cron on a normal server, or from GET /api/jobs/daily (Vercel Cron) on serverless hosting.
 // ===============================================================
@@ -79,6 +80,7 @@ async function run() {
     broadcasts: await crm.runBroadcastRetries(),
     induction: await require("../services/inductionService").runReminders(),
     materialNotices: await require("../services/onlineInductionService").runMaterialNotices(),
+    studentApplicationAlerts: await require("../services/studentReviewService").runAlerts(),
     onboardingStarted: await reconcileOnboarding(),
   };
   console.log("COMS daily jobs:", JSON.stringify(result));
