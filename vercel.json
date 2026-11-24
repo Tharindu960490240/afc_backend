@@ -10,5 +10,11 @@
       "path": "/api/jobs/daily",
       "schedule": "10 21 * * *"
     }
-  ]
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "main": true,
+      "*": false
+    }
+  }
 }
